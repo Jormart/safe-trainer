@@ -69,9 +69,9 @@ def preparar_preguntas(df_base: pd.DataFrame, modo: str, n: int) -> pd.DataFrame
         return aleatorias.reset_index(drop=True)
 
 def cb_reiniciar():
-    """Reinicia por completo la sesión y rerenderiza."""
+    """Reinicia por completo la sesión; Streamlit rerenderiza automáticamente al terminar el callback."""
     ss.clear()
-    st.rerun()
+    # No llames a st.rerun() dentro de callbacks: Streamlit ya rerun-ea después del callback
 
 def cb_iniciar(modo_select):
     """Inicia una nueva sesión con el modo seleccionado."""
@@ -82,7 +82,7 @@ def cb_iniciar(modo_select):
     ss.respondida = False
     ss.ultima_correcta = None
     ss.opciones_mezcladas = {}
-    st.rerun()
+    # Sin st.rerun() aquí
 
 def cb_responder():
     """Registra la respuesta, actualiza métricas y muestra feedback (sin requerir segundo clic)."""
@@ -93,7 +93,7 @@ def cb_responder():
 
     seleccion_key = f"radio_{idx}"
     if seleccion_key not in ss:
-        # Seguridad: si por alguna razón no hay selección, usamos la primera opción renderizada
+        # Si no hay selección, seed con la primera opción mostrada (robusto ante no-selección)
         opciones = ss.opciones_mezcladas.get(idx, [])
         if not opciones:
             return
@@ -110,7 +110,7 @@ def cb_responder():
     }
     ss.historial.append(registro)
 
-    # Guardar historial (append seguro)
+    # Guardar historial (append)
     try:
         historial_df = pd.DataFrame([registro])
         if os.path.exists(historial_path):
@@ -135,16 +135,15 @@ def cb_responder():
     except Exception as e:
         st.warning(f"No se pudo actualizar/persistir métricas: {e}")
 
-    # Marcar como respondida para mostrar feedback en esta misma ejecución
+    # Marcar como respondida; al terminar el callback, Streamlit hará rerun y se verá el feedback
     ss.respondida = True
 
 def cb_siguiente():
-    """Avanza a la siguiente pregunta y rerenderiza en el acto."""
+    """Avanza a la siguiente pregunta; tras el callback, Streamlit rerenderiza automáticamente."""
     ss.idx += 1
     ss.respondida = False
     ss.ultima_correcta = None
-    # Limpiar selección previa del radio (opcional); la siguiente pregunta tendrá otra key
-    st.rerun()
+    # Sin st.rerun() aquí
 
 # =========================
 # Cabecera y cronómetro
@@ -186,7 +185,7 @@ elif ss.idx < len(ss.preguntas):
     st.subheader(f"Pregunta {ss.idx + 1} / {len(ss.preguntas)}")
     st.write(enunciado)
 
-    # Preseed de selección para evitar estados no definidos (y no forzar doble clic)
+    # Preseed de selección para evitar estados no definidos
     seleccion_key = f"radio_{ss.idx}"
     if seleccion_key not in ss and len(mezcladas) > 0:
         ss[seleccion_key] = mezcladas[0]
