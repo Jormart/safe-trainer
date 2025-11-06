@@ -93,6 +93,7 @@ elif st.session_state.idx < len(st.session_state.preguntas):
             'Respuesta Correcta': correcta,
             'Resultado': resultado
         })
+
         df_idx = st.session_state.preguntas.index[st.session_state.idx]
         df.at[df_idx, 'Veces Realizada'] += 1
         if resultado == '✅':
@@ -102,12 +103,17 @@ elif st.session_state.idx < len(st.session_state.preguntas):
         else:
             df.at[df_idx, 'Errores'] += 1
             st.error(f"❌ Incorrecto. La respuesta correcta era: {correcta}")
-        st.session_state.respondida = True
 
-    if st.session_state.respondida:
-        if st.button("Siguiente pregunta"):
-            st.session_state.idx += 1
-            st.session_state.respondida = False
+        # Guardar historial inmediatamente
+        historial_df = pd.DataFrame([st.session_state.historial[-1]])
+        if os.path.exists(historial_path):
+            historial_df.to_csv(historial_path, mode='a', header=False, index=False)
+        else:
+            historial_df.to_csv(historial_path, index=False)
+
+        # Avanzar automáticamente
+        st.session_state.idx += 1
+        st.session_state.respondida = False
 
 # Resumen final
 else:
@@ -116,17 +122,11 @@ else:
     aciertos = sum(1 for h in st.session_state.historial if h['Resultado'] == '✅')
     errores = total - aciertos
     porcentaje = round((aciertos / total) * 100, 2)
-    st.write(f"- Total: {total} | ✅ Aciertos: {aciertos} | ❌ Errores: {errores} | %: {porcentaje}%")
-
+    st.write(f"- Total: {total} \n✅ Aciertos: {aciertos} \n❌ Errores: {errores} \n%: {porcentaje}%")
     st.write("Historial:")
     st.dataframe(pd.DataFrame(st.session_state.historial))
 
     df.to_excel(file_path, index=False)
-    historial_df = pd.DataFrame(st.session_state.historial)
-    if os.path.exists(historial_path):
-        historial_df.to_csv(historial_path, mode='a', header=False, index=False)
-    else:
-        historial_df.to_csv(historial_path, index=False)
 
     if st.button("🔄 Reiniciar sesión"):
         for key in list(st.session_state.keys()):
