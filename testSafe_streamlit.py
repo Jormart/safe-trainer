@@ -3,6 +3,8 @@ import pandas as pd
 import random
 import os
 from datetime import datetime, timedelta
+import re
+import unicodedata
 
 # =========================
 # Configuración
@@ -52,6 +54,43 @@ if 'ultima_correcta' not in ss:
     ss.ultima_correcta = None
 
 # =========================
+# Normalización robusta
+# =========================
+def normaliza(s: str) -> str:
+    """Limpia diferencias invisibles: NBSP, espacios de ancho cero, CR/TAB,
+    colapsa espacios, normaliza Unicode y hace casefold."""
+    if s is None:
+        return ""
+    s = str(s)
+    # Unicode canonical/compatibility normalization
+    s = unicodedata.normalize("NFKC", s)
+    # Sustituir NBSP y espacios finos por espacio normal
+    s = (
+        s.replace("\u00A0", " ")  # NBSP
+         .replace("\u2009", " ")  # thin space
+         .replace("\u2007", " ")
+         .replace("\u202F", " ")
+    )
+    # Quitar espacios de ancho cero / BOM
+    s = (
+        s.replace("\u200B", "")
+         .replace("\u200C", "")
+         .replace("\u200D", "")
+         .replace("\uFEFF", "")
+    )
+    # Normalizar CR/TAB a espacios
+    s = s.replace("\r", " ").replace("\t", " ")
+    # Colapsar múltiple whitespace
+    s = re.sub(r"\s+", " ", s)
+    # Strip y casefold (mejor que lower para Unicode)
+    s = s.strip().casefold()
+    # (Opcional) quitar bullets/numeraciones iniciales tipo "A) ", "1. ", "• "
+    s = re.sub(r"^(?:[A-Za-z]\)|\d+\.)\s*", "", s).replace("•", "")
+    # (Opcional) quitar puntuación final repetida (p. ej., "Hours." vs "Hours")
+    s = re.sub(r"[.·…]+$", "", s)
+    return s
+
+# =========================
 # Utilidades y callbacks
 # =========================
 def preparar_preguntas(df_base: pd.DataFrame, modo: str, n: int) -> pd.DataFrame:
@@ -71,7 +110,7 @@ def preparar_preguntas(df_base: pd.DataFrame, modo: str, n: int) -> pd.DataFrame
 def cb_reiniciar():
     """Reinicia por completo la sesión; Streamlit rerenderiza automáticamente al terminar el callback."""
     ss.clear()
-    # No llames a st.rerun() dentro de callbacks: Streamlit ya rerun-ea después del callback
+    # No llamar a st.rerun() dentro de callbacks: Streamlit re-ejecuta tras el callback
 
 def cb_iniciar(modo_select):
     """Inicia una nueva sesión con el modo seleccionado."""
@@ -82,7 +121,7 @@ def cb_iniciar(modo_select):
     ss.respondida = False
     ss.ultima_correcta = None
     ss.opciones_mezcladas = {}
-    # Sin st.rerun() aquí
+    # Sin st.rerun() aquí (no-op dentro de callbacks)
 
 def cb_responder():
     """Registra la respuesta, actualiza métricas y muestra feedback (sin requerir segundo clic)."""
@@ -93,14 +132,17 @@ def cb_responder():
 
     seleccion_key = f"radio_{idx}"
     if seleccion_key not in ss:
-        # Si no hay selección, seed con la primera opción mostrada (robusto ante no-selección)
+        # Si no hay selección, seed con la primera opción mostrada
         opciones = ss.opciones_mezcladas.get(idx, [])
         if not opciones:
             return
         ss[seleccion_key] = opciones[0]
     seleccion = ss[seleccion_key]
 
-    resultado = '✅' if seleccion == correcta else '❌'
+    # *** Comparación robusta con normalización ***
+    es_correcta = normaliza(seleccion) == normaliza(correcta)
+    resultado = '✅' if es_correcta else '❌'
+
     registro = {
         'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'Pregunta': enunciado,
@@ -124,7 +166,7 @@ def cb_responder():
     try:
         df_idx = ss.preguntas.loc[idx, 'df_index']
         df.at[df_idx, 'Veces Realizada'] += 1
-        if resultado == '✅':
+        if es_correcta:
             if df.at[df_idx, 'Errores'] > 0:
                 df.at[df_idx, 'Errores'] -= 1
             ss.ultima_correcta = True
@@ -143,7 +185,7 @@ def cb_siguiente():
     ss.idx += 1
     ss.respondida = False
     ss.ultima_correcta = None
-    # Sin st.rerun() aquí
+    # Sin st.rerun() aquí (no-op dentro de callbacks)
 
 # =========================
 # Cabecera y cronómetro
@@ -171,7 +213,8 @@ if ss.modo is None:
 elif ss.idx < len(ss.preguntas):
     fila = ss.preguntas.iloc[ss.idx]
     enunciado = fila['Pregunta']
-    opciones = [op.strip() for op in fila['Opciones'].split('\n') if op.strip()]
+    # Limpieza de NBSP en opciones ya desde el origen
+    opciones = [op.replace("\u00A0", " ").strip() for op in fila['Opciones'].split('\n') if op.strip()]
     correcta = fila['Respuesta Correcta']
 
     # Mezclar opciones solo una vez por índice de pregunta
@@ -204,6 +247,7 @@ elif ss.idx < len(ss.preguntas):
         )
 
     if ss.respondida:
+        # Feedback usando el texto original 'correcta'
         if ss.ultima_correcta:
             st.success("✅ ¡Correcto!")
         else:
