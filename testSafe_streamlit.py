@@ -36,11 +36,20 @@ if 'modo' not in st.session_state:
     st.session_state.modo = None
 if 'opciones_mezcladas' not in st.session_state:
     st.session_state.opciones_mezcladas = {}
+if 'respondida' not in st.session_state:
+    st.session_state.respondida = False
 
 # Título y cronómetro
 st.title("🧠 Entrenador SAFe - Sesión de preguntas")
 tiempo_restante = tiempo_total - (datetime.now() - st.session_state.inicio)
-st.markdown(f"⏳ Tiempo restante: **{tiempo_restante.seconds//60} min**")
+if tiempo_restante.total_seconds() <= 0:
+    st.error("⏰ ¡Tiempo agotado! La sesión ha finalizado.")
+    if st.button("🔄 Reiniciar sesión"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+    st.stop()
+else:
+    st.markdown(f"⏳ Tiempo restante: **{tiempo_restante.seconds//60} min**")
 
 # Selección de modo
 if st.session_state.modo is None:
@@ -53,9 +62,8 @@ if st.session_state.modo is None:
             df_random = df.sample(frac=0.1)
             st.session_state.preguntas = pd.concat([df_ordenadas, df_random]).drop_duplicates().reset_index(drop=True).head(num_preguntas_por_sesion)
         else:
-            st.session_state.preguntas = df.sample(n=num_preguntas_por_sesion)
+            st.session_state.preguntas = df.sample(n=num_preguntas_por_sesion).reset_index(drop=True)
         st.session_state.inicio = datetime.now()
-        st.experimental_rerun()
 
 # Mostrar preguntas
 elif st.session_state.idx < len(st.session_state.preguntas):
@@ -76,31 +84,30 @@ elif st.session_state.idx < len(st.session_state.preguntas):
     st.write(enunciado)
     seleccion = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{st.session_state.idx}")
 
-    if st.button("Responder"):
+    if st.button("Responder") and not st.session_state.respondida:
         resultado = '✅' if seleccion == correcta else '❌'
         st.session_state.historial.append({
+            'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'Pregunta': enunciado,
             'Respuesta Dada': seleccion,
-            'Correcta': correcta,
+            'Respuesta Correcta': correcta,
             'Resultado': resultado
         })
-        # Actualizar contadores
         df_idx = st.session_state.preguntas.index[st.session_state.idx]
         df.at[df_idx, 'Veces Realizada'] += 1
         if resultado == '✅':
             if df.at[df_idx, 'Errores'] > 0:
                 df.at[df_idx, 'Errores'] -= 1
-        else:
-            df.at[df_idx, 'Errores'] += 1
-
-        # Feedback y avance automático
-        if resultado == '✅':
             st.success("✅ ¡Correcto!")
         else:
+            df.at[df_idx, 'Errores'] += 1
             st.error(f"❌ Incorrecto. La respuesta correcta era: {correcta}")
+        st.session_state.respondida = True
 
-        st.session_state.idx += 1
-        st.experimental_rerun()
+    if st.session_state.respondida:
+        if st.button("Siguiente pregunta"):
+            st.session_state.idx += 1
+            st.session_state.respondida = False
 
 # Resumen final
 else:
@@ -112,9 +119,8 @@ else:
     st.write(f"- Total: {total} | ✅ Aciertos: {aciertos} | ❌ Errores: {errores} | %: {porcentaje}%")
 
     st.write("Historial:")
-    st.table(pd.DataFrame(st.session_state.historial))
+    st.dataframe(pd.DataFrame(st.session_state.historial))
 
-    # Guardar progreso
     df.to_excel(file_path, index=False)
     historial_df = pd.DataFrame(st.session_state.historial)
     if os.path.exists(historial_path):
@@ -125,4 +131,3 @@ else:
     if st.button("🔄 Reiniciar sesión"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.experimental_rerun()
