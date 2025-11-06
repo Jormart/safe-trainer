@@ -1,0 +1,19 @@
+Fecha,Pregunta,Respuesta Dada,Respuesta Correcta,Resultado
+2025-11-05 23:20:20,"During PI planning, Agile Teams estimate user stories using story points. What estimation technique is commonly used to estimate Epics in SAFe?",T-Shirt Sizing,T-Shirt Sizing,✅
+2025-11-05 23:21:09,What is one method for designing the end-to-end Customer experience?,Journey mapping,Journey mapping,✅
+2025-11-05 23:21:34,What question helps Product Management in creating a Vision?,What problem(s) will the Solution solve?,What problem(s) will the Solution solve?,✅
+2025-11-05 23:21:54,What is one method to establish a team's velocity?,Add the Story points for all Features completed in the Iteration,Compare the average Story points completed throughout the previous Iterations.,❌
+2025-11-05 23:22:31,What is the primary purpose of the Continuous Exploration (CE) process in SAFe?,"Discover, explore new product opportunities and identify emerging business and technical trends","Discover, explore new product opportunities and identify emerging business and technical trends",✅
+2025-11-05 23:22:53,Which tool shows dependencies during PI planning?,ART Planning Board,ART Planning Board,✅
+2025-11-05 23:23:13,What is one influence on Solution and PI Roadmaps?,Value Streams,Market dynamics,❌
+2025-11-05 23:23:42,Which statement describes an owned ART PI Risk?,There is a strategy to adjust the plan as necessary,Someone has taken the responsibility of the risk,❌
+2025-11-05 23:24:20,What is one role of Product Management?,Managing and prioritizing the Team Backlog,Connecting with the Customer,❌
+2025-11-05 23:24:45,"After addressing risks during the PI Planning in ART PI Risks, what activity follows?",Management Review and Problem-Solving session,Confidence vote,❌
+2025-11-05 23:35:01,"During PI planning, Agile Teams estimate user stories using story points. What estimation technique is commonly used to estimate Epics in SAFe?",Affinity Mapping,T-Shirt Sizing,❌
+2025-11-05 23:35:02,What is one method for designing the end-to-end Customer experience?,Journey mapping,Journey mapping,✅
+2025-11-05 23:35:03,What question helps Product Management in creating a Vision?,What problem(s) will the Solution solve?,What problem(s) will the Solution solve?,✅
+2025-11-05 23:35:04,What is one method to establish a team's velocity?,Add the Story points for all Features completed in the Iteration,Compare the average Story points completed throughout the previous Iterations.,❌
+2025-11-05 23:35:04,What is the primary purpose of the Continuous Exploration (CE) process in SAFe?,"Discover, explore new product opportunities and identify emerging business and technical trends","Discover, explore new product opportunities and identify emerging business and technical trends",✅
+2025-11-05 23:35:04,Which tool shows dependencies during PI planning?,ART PI Risks Board,ART Planning Board,❌
+2025-11-05 23:35:05,What is one influence on Solution and PI Roadmaps?,ART capacity,Market dynamics,❌
+2025-11-05 23:35:06,Which statement describes an owned ART PI Risk?,Someone has taken the responsibility of the risk,Someone has taken the responsibility of the risk,✅
