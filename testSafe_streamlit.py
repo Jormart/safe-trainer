@@ -2,74 +2,90 @@ import streamlit as st
 import pandas as pd
 import random
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Configuración
-FILE_PATH = 'Agil - Copia de Preguntas_Examen.xlsx'
-HISTORIAL_PATH = 'historial_sesiones.csv'
-NUM_PREGUNTAS = 10
+file_path = 'Agil - Copia de Preguntas_Examen.xlsx'
+historial_path = 'historial_sesiones.csv'
+num_preguntas_por_sesion = 10
+tiempo_total = timedelta(minutes=90)  # 1h 30min
 
-# Cargar preguntas
-df = pd.read_excel(FILE_PATH, engine='openpyxl')
-if 'Veces Realizada' not in df.columns:
-    df['Veces Realizada'] = 0
-if 'Errores' not in df.columns:
-    df['Errores'] = 0
-df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
+# Cargar datos
+@st.cache_data
+def cargar_datos():
+    df = pd.read_excel(file_path, engine='openpyxl')
+    if 'Veces Realizada' not in df.columns:
+        df['Veces Realizada'] = 0
+    if 'Errores' not in df.columns:
+        df['Errores'] = 0
+    df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
+    return df
 
-# Función para ordenar preguntas
-def ordenar_preguntas(dataframe):
-    ordenadas = dataframe.sort_values(by=['Errores', 'Veces Realizada'], ascending=[False, True])
-    aleatorias = dataframe.sample(frac=0.1)
-    final = pd.concat([ordenadas, aleatorias]).drop_duplicates().reset_index(drop=True)
-    return final.head(NUM_PREGUNTAS)
+df = cargar_datos()
 
 # Inicializar estado
+if 'inicio' not in st.session_state:
+    st.session_state.inicio = datetime.now()
+if 'idx' not in st.session_state:
+    st.session_state.idx = 0
+if 'historial' not in st.session_state:
+    st.session_state.historial = []
 if 'preguntas' not in st.session_state:
-    st.session_state.preguntas = ordenar_preguntas(df)
-    st.session_state.idx = 0
-    st.session_state.historial = []
+    st.session_state.preguntas = None
+if 'modo' not in st.session_state:
+    st.session_state.modo = None
+if 'opciones_mezcladas' not in st.session_state:
     st.session_state.opciones_mezcladas = {}
-    st.session_state.mostrando_resultado = False
-    st.session_state.terminado = False
 
-# Título
-st.title("🧠 Sesión SAFe interactiva")
-st.caption("Yet another Python Script from Capt.Python&The6ThMan based upon Ruben Sastre Excel")
+# Título y cronómetro
+st.title("🧠 Entrenador SAFe - Sesión de preguntas")
+tiempo_restante = tiempo_total - (datetime.now() - st.session_state.inicio)
+st.markdown(f"⏳ Tiempo restante: **{tiempo_restante.seconds//60} min**")
 
-# Botón reinicio
-if st.button("🔄 Reiniciar sesión"):
-    st.session_state.clear()
-    st.session_state.preguntas = ordenar_preguntas(df)
-    st.session_state.idx = 0
-    st.session_state.historial = []
-    st.session_state.opciones_mezcladas = {}
-    st.session_state.mostrando_resultado = False
-    st.session_state.terminado = False
+# Selección de modo
+if st.session_state.modo is None:
+    st.subheader("Selecciona el modo de preguntas:")
+    modo = st.radio("Modo:", ["Adaptativo", "Aleatorio puro"])
+    if st.button("Iniciar sesión"):
+        st.session_state.modo = modo
+        if modo == "Adaptativo":
+            df_ordenadas = df.sort_values(by=['Errores', 'Veces Realizada'], ascending=[False, True])
+            df_random = df.sample(frac=0.1)
+            st.session_state.preguntas = pd.concat([df_ordenadas, df_random]).drop_duplicates().reset_index(drop=True).head(num_preguntas_por_sesion)
+        else:
+            st.session_state.preguntas = df.sample(n=num_preguntas_por_sesion)
+        st.session_state.inicio = datetime.now()
+        st.experimental_rerun()
 
-# Mostrar pregunta
-def mostrar_pregunta():
-    idx = st.session_state.idx
-    pregunta = st.session_state.preguntas.iloc[idx]
+# Mostrar preguntas
+elif st.session_state.idx < len(st.session_state.preguntas):
+    pregunta = st.session_state.preguntas.iloc[st.session_state.idx]
     enunciado = pregunta['Pregunta']
     opciones = [op.strip() for op in pregunta['Opciones'].split('\n') if op.strip()]
     correcta = pregunta['Respuesta Correcta'].strip()
 
-    # Mezclar opciones solo una vez
-    if idx not in st.session_state.opciones_mezcladas:
+    # Mezclar opciones una sola vez
+    if st.session_state.idx not in st.session_state.opciones_mezcladas:
         mezcladas = opciones.copy()
         random.shuffle(mezcladas)
-        st.session_state.opciones_mezcladas[idx] = mezcladas
+        st.session_state.opciones_mezcladas[st.session_state.idx] = mezcladas
     else:
-        mezcladas = st.session_state.opciones_mezcladas[idx]
+        mezcladas = st.session_state.opciones_mezcladas[st.session_state.idx]
 
-    st.subheader(f"Pregunta {idx + 1}")
+    st.subheader(f"Pregunta {st.session_state.idx + 1}")
     st.write(enunciado)
-    seleccion = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{idx}")
+    seleccion = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{st.session_state.idx}")
 
-    if st.button("Responder", key=f"btn_{idx}"):
+    if st.button("Responder"):
         resultado = '✅' if seleccion == correcta else '❌'
-        df_idx = st.session_state.preguntas.index[idx]
+        st.session_state.historial.append({
+            'Pregunta': enunciado,
+            'Respuesta Dada': seleccion,
+            'Correcta': correcta,
+            'Resultado': resultado
+        })
+        # Actualizar contadores
+        df_idx = st.session_state.preguntas.index[st.session_state.idx]
         df.at[df_idx, 'Veces Realizada'] += 1
         if resultado == '✅':
             if df.at[df_idx, 'Errores'] > 0:
@@ -77,61 +93,36 @@ def mostrar_pregunta():
         else:
             df.at[df_idx, 'Errores'] += 1
 
-        st.session_state.historial.append({
-            'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'Pregunta': enunciado,
-            'Respuesta Dada': seleccion,
-            'Respuesta Correcta': correcta,
-            'Resultado': resultado
-        })
-        st.session_state.mostrando_resultado = True
-
-    if st.session_state.mostrando_resultado:
-        ultimo = st.session_state.historial[-1]
-        if ultimo['Resultado'] == '✅':
+        # Feedback y avance automático
+        if resultado == '✅':
             st.success("✅ ¡Correcto!")
         else:
-            st.error(f"❌ Incorrecto. La respuesta correcta era: {ultimo['Respuesta Correcta']}")
-        if st.button("Siguiente pregunta"):
-            st.session_state.idx += 1
-            st.session_state.mostrando_resultado = False
-            if st.session_state.idx >= len(st.session_state.preguntas):
-                st.session_state.terminado = True
+            st.error(f"❌ Incorrecto. La respuesta correcta era: {correcta}")
 
-# Mostrar resumen
-def mostrar_resumen():
-    historial = st.session_state.historial
-    total = len(historial)
-    aciertos = sum(1 for h in historial if h['Resultado'] == '✅')
+        st.session_state.idx += 1
+        st.experimental_rerun()
+
+# Resumen final
+else:
+    st.subheader("📋 Resumen de la sesión")
+    total = len(st.session_state.historial)
+    aciertos = sum(1 for h in st.session_state.historial if h['Resultado'] == '✅')
     errores = total - aciertos
     porcentaje = round((aciertos / total) * 100, 2)
+    st.write(f"- Total: {total} | ✅ Aciertos: {aciertos} | ❌ Errores: {errores} | %: {porcentaje}%")
 
-    st.markdown("## 📋 Resumen de la sesión")
-    st.write(f"- Total de preguntas: {total}")
-    st.write(f"- Aciertos: {aciertos}")
-    st.write(f"- Errores: {errores}")
-    st.write(f"- Porcentaje de aciertos: {porcentaje}%")
-
-    fallos = [h['Pregunta'] for h in historial if h['Resultado'] == '❌']
-    if fallos:
-        st.markdown("### 🔁 Preguntas que deberías repasar:")
-        for i, pregunta in enumerate(fallos[:3], 1):
-            st.write(f"{i}. {pregunta}")
-    else:
-        st.success("🎉 ¡No has fallado ninguna pregunta!")
+    st.write("Historial:")
+    st.table(pd.DataFrame(st.session_state.historial))
 
     # Guardar progreso
-    df.to_excel(FILE_PATH, index=False)
-    historial_df = pd.DataFrame(historial)
-    if os.path.exists(HISTORIAL_PATH):
-        historial_df.to_csv(HISTORIAL_PATH, mode='a', header=False, index=False)
+    df.to_excel(file_path, index=False)
+    historial_df = pd.DataFrame(st.session_state.historial)
+    if os.path.exists(historial_path):
+        historial_df.to_csv(historial_path, mode='a', header=False, index=False)
     else:
-        historial_df.to_csv(HISTORIAL_PATH, index=False)
+        historial_df.to_csv(historial_path, index=False)
 
-    st.success("✅ Progreso guardado. ¡Sigue así!")
-
-# Lógica principal
-if not st.session_state.terminado:
-    mostrar_pregunta()
-else:
-    mostrar_resumen()
+    if st.button("🔄 Reiniciar sesión"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.experimental_rerun()
