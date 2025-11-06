@@ -38,6 +38,9 @@ if 'opciones_mezcladas' not in st.session_state:
     st.session_state.opciones_mezcladas = {}
 if 'respondida' not in st.session_state:
     st.session_state.respondida = False
+# NUEVO: guarda si la última respuesta fue correcta para mostrar feedback
+if 'ultima_correcta' not in st.session_state:
+    st.session_state.ultima_correcta = None
 
 # Título y cronómetro
 st.title("🧠 Entrenador SAFe - Sesión de preguntas")
@@ -72,7 +75,7 @@ elif st.session_state.idx < len(st.session_state.preguntas):
     opciones = [op.strip() for op in pregunta['Opciones'].split('\n') if op.strip()]
     correcta = pregunta['Respuesta Correcta'].strip()
 
-    # Mezclar opciones una sola vez
+    # Mezclar opciones una sola vez por índice
     if st.session_state.idx not in st.session_state.opciones_mezcladas:
         mezcladas = opciones.copy()
         random.shuffle(mezcladas)
@@ -82,38 +85,62 @@ elif st.session_state.idx < len(st.session_state.preguntas):
 
     st.subheader(f"Pregunta {st.session_state.idx + 1}")
     st.write(enunciado)
-    seleccion = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{st.session_state.idx}")
 
-    if st.button("Responder") and not st.session_state.respondida:
-        resultado = '✅' if seleccion == correcta else '❌'
-        st.session_state.historial.append({
-            'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'Pregunta': enunciado,
-            'Respuesta Dada': seleccion,
-            'Respuesta Correcta': correcta,
-            'Resultado': resultado
-        })
+    # Radio: clave única por pregunta
+    seleccion = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{st.session_state.idx}", disabled=st.session_state.respondida)
 
-        df_idx = st.session_state.preguntas.index[st.session_state.idx]
-        df.at[df_idx, 'Veces Realizada'] += 1
-        if resultado == '✅':
-            if df.at[df_idx, 'Errores'] > 0:
-                df.at[df_idx, 'Errores'] -= 1
+    # Dos columnas: Responder y Siguiente
+    col1, col2 = st.columns([1, 1])
+
+    # --- Botón Responder ---
+    with col1:
+        if st.button("Responder", disabled=st.session_state.respondida):
+            resultado = '✅' if seleccion == correcta else '❌'
+
+            # Registrar en historial visual y en csv
+            st.session_state.historial.append({
+                'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'Pregunta': enunciado,
+                'Respuesta Dada': seleccion,
+                'Respuesta Correcta': correcta,
+                'Resultado': resultado
+            })
+
+            # Actualizar métricas en df original
+            df_idx = st.session_state.preguntas.index[st.session_state.idx]
+            df.at[df_idx, 'Veces Realizada'] += 1
+            if resultado == '✅':
+                if df.at[df_idx, 'Errores'] > 0:
+                    df.at[df_idx, 'Errores'] -= 1
+                st.session_state.ultima_correcta = True
+            else:
+                df.at[df_idx, 'Errores'] += 1
+                st.session_state.ultima_correcta = False
+
+            # Guardar historial inmediatamente en CSV
+            historial_df = pd.DataFrame([st.session_state.historial[-1]])
+            if os.path.exists(historial_path):
+                historial_df.to_csv(historial_path, mode='a', header=False, index=False)
+            else:
+                historial_df.to_csv(historial_path, index=False)
+
+            # Marcar como respondida para mostrar feedback y habilitar "Siguiente"
+            st.session_state.respondida = True
+
+    # --- Feedback y botón Siguiente ---
+    if st.session_state.respondida:
+        if st.session_state.ultima_correcta:
             st.success("✅ ¡Correcto!")
         else:
-            df.at[df_idx, 'Errores'] += 1
             st.error(f"❌ Incorrecto. La respuesta correcta era: {correcta}")
 
-        # Guardar historial inmediatamente
-        historial_df = pd.DataFrame([st.session_state.historial[-1]])
-        if os.path.exists(historial_path):
-            historial_df.to_csv(historial_path, mode='a', header=False, index=False)
-        else:
-            historial_df.to_csv(historial_path, index=False)
-
-        # Avanzar automáticamente
-        st.session_state.idx += 1
-        st.session_state.respondida = False
+        with col2:
+            if st.button("Siguiente ➜"):
+                st.session_state.idx += 1
+                st.session_state.respondida = False
+                st.session_state.ultima_correcta = None
+                # limpiar el radio anterior (opcional): Streamlit lo gestionará al cambiar la key
+                st.rerun()
 
 # Resumen final
 else:
@@ -121,11 +148,11 @@ else:
     total = len(st.session_state.historial)
     aciertos = sum(1 for h in st.session_state.historial if h['Resultado'] == '✅')
     errores = total - aciertos
-    porcentaje = round((aciertos / total) * 100, 2)
+    porcentaje = round((aciertos / total) * 100, 2) if total else 0.0
     st.write(f"- Total: {total} \n✅ Aciertos: {aciertos} \n❌ Errores: {errores} \n%: {porcentaje}%")
     st.write("Historial:")
     st.dataframe(pd.DataFrame(st.session_state.historial))
-
+    # Persistir df (métricas) al finalizar
     df.to_excel(file_path, index=False)
 
     if st.button("🔄 Reiniciar sesión"):
