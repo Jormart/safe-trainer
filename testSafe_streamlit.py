@@ -28,14 +28,42 @@ def cargar_datos():
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
     df['Pregunta'] = df['Pregunta'].astype(str).str.strip()
     df['Respuesta Correcta'] = df['Respuesta Correcta'].astype(str).str.strip()
-    # Detectar si hay múltiples respuestas (separadas por ; o ,)
-    df['Es Multiple'] = df['Respuesta Correcta'].str.contains('[;,]')
-    # Convertir respuestas múltiples a lista
-    df['Respuestas Correctas'] = df.apply(
-        lambda row: [r.strip() for r in row['Respuesta Correcta'].split(';' if ';' in str(row['Respuesta Correcta']) else ',')] 
-        if row['Es Multiple'] else [row['Respuesta Correcta']], 
-        axis=1
-    )
+    
+    # Detectar preguntas múltiples por:
+    # 1. Separadores en la respuesta (;,)
+    # 2. Texto en la pregunta que indica selección múltiple
+    def es_pregunta_multiple(row):
+        # Patrones que indican selección múltiple en la pregunta
+        patrones_multiple = [
+            r'\(.*choose.*two.*\)',  # (Choose two)
+            r'\(.*select.*two.*\)',  # (Select two)
+            r'\(.*pick.*two.*\)',    # (Pick two)
+            r'.*\b2\b.*correct.*',   # "2 correct answers"
+            r'.*\btwo\b.*correct.*'  # "two correct answers"
+        ]
+        # Revisar el texto de la pregunta (case insensitive)
+        pregunta = str(row['Pregunta']).lower()
+        es_multiple_por_texto = any(re.search(patron, pregunta, re.IGNORECASE) for patron in patrones_multiple)
+        
+        # Revisar separadores en la respuesta
+        es_multiple_por_separador = bool(re.search('[;,]', str(row['Respuesta Correcta'])))
+        
+        return es_multiple_por_texto or es_multiple_por_separador
+    
+    # Marcar preguntas múltiples
+    df['Es Multiple'] = df.apply(es_pregunta_multiple, axis=1)
+    
+    # Convertir respuestas a lista (sean múltiples o no)
+    def obtener_respuestas(row):
+        resp = str(row['Respuesta Correcta'])
+        if row['Es Multiple']:
+            if ';' in resp:
+                return [r.strip() for r in resp.split(';')]
+            elif ',' in resp:
+                return [r.strip() for r in resp.split(',')]
+        return [resp.strip()]
+    
+    df['Respuestas Correctas'] = df.apply(obtener_respuestas, axis=1)
     return df
 
 df = cargar_datos()
