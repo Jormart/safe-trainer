@@ -269,16 +269,15 @@ else:
             with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}"):
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
-                # Primero mostrar todas las opciones
-                for opt in opciones:
-                    st.write(opt)
-                
-                # Luego mostrar las respuestas correctas
-                st.markdown("---")
-                st.markdown("**Respuestas correctas:**")
+                opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 respuestas_correctas = row.get('Respuestas Correctas', [])
-                for resp in respuestas_correctas:
-                    st.markdown(f"**✅ {resp}**")
+                respuestas_norm = {normaliza(r) for r in respuestas_correctas}
+                
+                for opt in opciones:
+                    if normaliza(opt) in respuestas_norm:
+                        st.markdown(f"**✅ {opt}**")
+                    else:
+                        st.write(opt)
                         
                 if row.get('Es Multiple', False):
                     st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
