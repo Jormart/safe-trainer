@@ -33,9 +33,13 @@ def cargar_datos():
     # 1. Separadores en la respuesta (;,)
     # 2. Texto en la pregunta que indica selección múltiple
     def es_pregunta_multiple(row):
-        # Solo buscar exactamente "(Choose two)" en la pregunta
-        pregunta = str(row['Pregunta'])
-        return '(Choose two)' in pregunta
+        # Detectar preguntas múltiples si contienen la frase "choose two"
+        # (caso insensible) o si la columna 'Respuesta Correcta' contiene
+        # un separador ';' (el usuario añadió ';' para estas preguntas).
+        pregunta = str(row.get('Pregunta', '')).lower()
+        es_multiple_por_texto = 'choose two' in pregunta
+        es_multiple_por_separador = ';' in str(row.get('Respuesta Correcta', ''))
+        return es_multiple_por_texto or es_multiple_por_separador
         
         return es_multiple_por_texto or es_multiple_por_separador
     
