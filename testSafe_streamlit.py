@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timedelta
 import re
 import unicodedata
+from difflib import SequenceMatcher
 
 # =========================
 # Configuración
@@ -275,10 +276,23 @@ else:
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 respuestas_correctas = row.get('Respuestas Correctas', [])
-                respuestas_norm = {normaliza(r) for r in respuestas_correctas}
-                
+                respuestas_norm = [normaliza(r) for r in respuestas_correctas]
+
+                def matches(opt_text_norm: str, correct_norm_list) -> bool:
+                    # Flexible match: exact normalized match, substring, or high similarity
+                    for c in correct_norm_list:
+                        if c == opt_text_norm:
+                            return True
+                        if c in opt_text_norm or opt_text_norm in c:
+                            return True
+                        # Fuzzy match threshold
+                        if SequenceMatcher(None, c, opt_text_norm).ratio() >= 0.86:
+                            return True
+                    return False
+
                 for opt in opciones:
-                    if normaliza(opt) in respuestas_norm:
+                    opt_norm = normaliza(opt)
+                    if matches(opt_norm, respuestas_norm):
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
