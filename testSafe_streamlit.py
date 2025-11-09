@@ -299,17 +299,7 @@ else:
                         
                 if row.get('Es Multiple', False):
                     st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
-                if st.button("Usar esta pregunta en sesión", key=f"use_{i}"):
-                    # Poner la pregunta seleccionada como nueva sesión de 1 pregunta
-                    ss.modo = "Buscador"
-                    temp = row.to_frame().T.copy()
-                    temp['df_index'] = temp.index
-                    ss.preguntas = temp.reset_index(drop=True)
-                    ss.idx = 0
-                    ss.respondida = False
-                    ss.ultima_correcta = None
-                    # Forzar re-ejecución para mostrar la UI principal con la pregunta elegida
-                    st.experimental_rerun()
+                # Botón de 'Usar esta pregunta en sesión' eliminado (no aportaba).
 
 # =========================
 # Flujo principal
