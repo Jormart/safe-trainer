@@ -262,6 +262,14 @@ else:
     buscar_text = st.sidebar.text_input("Palabras clave")
     if st.sidebar.button("Buscar"):
         ss.search_results = buscar_preguntas(buscar_text, df)
+    # Debug: mostrar preguntas detectadas como múltiples y su valor en bruto
+    if st.sidebar.checkbox("Mostrar preguntas múltiples (debug)", key="dbg_mult"):
+        mult = df[df['Es Multiple'] == True]
+        st.sidebar.write(f"Total marcadas como múltiples: {len(mult)}")
+        for i, r in mult.iterrows():
+            st.sidebar.markdown(f"**Index {i}**: {r.get('Pregunta','')[:120]}")
+            st.sidebar.write(f"Respuesta raw: `{r.get('Respuesta Correcta','')}`")
+            st.sidebar.write(f"Respuestas parsed: {r.get('Respuestas Correctas',[]) }")
     # Mostrar resultados previos si existen
     if 'search_results' in ss and ss.search_results is not None:
         resultados = ss.search_results
