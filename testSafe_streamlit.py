@@ -353,7 +353,15 @@ elif ss.idx < len(ss.preguntas):
         ss[seleccion_key] = seleccion
     else:
         # Radio button para respuesta única
-        ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{ss.idx}")
+        if fila['Es Multiple']:
+            st.write("**Selecciona todas las respuestas correctas:**")
+            seleccion = []
+            for opcion in mezcladas:
+                if st.checkbox(opcion, key=f"check_{ss.idx}_{opcion}"):
+                    seleccion.append(opcion)
+            ss[seleccion_key] = seleccion
+        else:
+            ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{ss.idx}")
 
     col1, col2 = st.columns([1, 1])
 
