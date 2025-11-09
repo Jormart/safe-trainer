@@ -33,20 +33,9 @@ def cargar_datos():
     # 1. Separadores en la respuesta (;,)
     # 2. Texto en la pregunta que indica selección múltiple
     def es_pregunta_multiple(row):
-        # Patrones que indican selección múltiple en la pregunta
-        patrones_multiple = [
-            r'\(.*choose.*two.*\)',  # (Choose two)
-            r'\(.*select.*two.*\)',  # (Select two)
-            r'\(.*pick.*two.*\)',    # (Pick two)
-            r'.*\b2\b.*correct.*',   # "2 correct answers"
-            r'.*\btwo\b.*correct.*'  # "two correct answers"
-        ]
-        # Revisar el texto de la pregunta (case insensitive)
-        pregunta = str(row['Pregunta']).lower()
-        es_multiple_por_texto = any(re.search(patron, pregunta, re.IGNORECASE) for patron in patrones_multiple)
-        
-        # Revisar separadores en la respuesta
-        es_multiple_por_separador = bool(re.search('[;,]', str(row['Respuesta Correcta'])))
+        # Solo buscar exactamente "(Choose two)" en la pregunta
+        pregunta = str(row['Pregunta'])
+        return '(Choose two)' in pregunta
         
         return es_multiple_por_texto or es_multiple_por_separador
     
@@ -280,14 +269,16 @@ else:
             with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}"):
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
-                respuestas_correctas = row.get('Respuestas Correctas', [])
-                respuestas_norm = {normaliza(r) for r in respuestas_correctas}
-                
+                # Primero mostrar todas las opciones
                 for opt in opciones:
-                    if normaliza(opt) in respuestas_norm:
-                        st.markdown(f"**✅ {opt}**")
-                    else:
-                        st.write(opt)
+                    st.write(opt)
+                
+                # Luego mostrar las respuestas correctas
+                st.markdown("---")
+                st.markdown("**Respuestas correctas:**")
+                respuestas_correctas = row.get('Respuestas Correctas', [])
+                for resp in respuestas_correctas:
+                    st.markdown(f"**✅ {resp}**")
                         
                 if row.get('Es Multiple', False):
                     st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
