@@ -200,6 +200,79 @@ if tiempo_restante.total_seconds() <= 0:
 else:
     st.markdown(f"⏳ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
 
+    # =========================
+    # Buscador de preguntas (barra lateral)
+    # =========================
+    def buscar_preguntas(query: str, df_base: pd.DataFrame) -> pd.DataFrame:
+        """Busca la query normalizada en Pregunta, Opciones y Respuesta Correcta.
+        Devuelve dataframe con filas que contienen la query (casefold y limpieza).
+        """
+        if not query or str(query).strip() == "":
+            return pd.DataFrame(columns=df_base.columns)
+        qn = normaliza(query)
+
+        def fila_coincide(row):
+            combinado = " ".join([
+                str(row.get('Pregunta', '')),
+                str(row.get('Opciones', '')),
+                str(row.get('Respuesta Correcta', ''))
+            ])
+            return qn in normaliza(combinado)
+
+        try:
+            resultados = df_base[df_base.apply(fila_coincide, axis=1)].copy()
+        except Exception:
+            resultados = pd.DataFrame(columns=df_base.columns)
+        return resultados
+
+    st.sidebar.header("🔎 Buscador de preguntas")
+    uploaded_file = st.sidebar.file_uploader("Subir Excel (opcional)", type=["xlsx"]) 
+    # Si el usuario sube un archivo, intentar leerlo y reemplazar temporalmente 'df'
+    if uploaded_file is not None:
+        try:
+            df_upload = pd.read_excel(uploaded_file, engine='openpyxl')
+            # Asegurar columnas mínimas
+            if 'Veces Realizada' not in df_upload.columns:
+                df_upload['Veces Realizada'] = 0
+            if 'Errores' not in df_upload.columns:
+                df_upload['Errores'] = 0
+            df = df_upload.reset_index(drop=True)
+            st.sidebar.success(f"Archivo cargado: {getattr(uploaded_file, 'name', 'memoria')}")
+        except Exception as e:
+            st.sidebar.error(f"No se pudo leer el Excel: {e}")
+
+    buscar_text = st.sidebar.text_input("Palabras clave")
+    if st.sidebar.button("Buscar"):
+        ss.search_results = buscar_preguntas(buscar_text, df)
+    # Mostrar resultados previos si existen
+    if 'search_results' in ss and ss.search_results is not None:
+        resultados = ss.search_results
+        st.sidebar.write(f"Resultados: {len(resultados)}")
+        # limitar la vista para no sobrecargar la sidebar
+        max_show = 30
+        for i, (_, row) in enumerate(resultados.head(max_show).iterrows()):
+            titulo = row.get('Pregunta', '')
+            with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}"):
+                st.write(row.get('Pregunta', ''))
+                opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
+                correcta = row.get('Respuesta Correcta', '')
+                for opt in opciones:
+                    if normaliza(opt) == normaliza(correcta):
+                        st.markdown(f"**✅ {opt}**")
+                    else:
+                        st.write(opt)
+                if st.button("Usar esta pregunta en sesión", key=f"use_{i}"):
+                    # Poner la pregunta seleccionada como nueva sesión de 1 pregunta
+                    ss.modo = "Buscador"
+                    temp = row.to_frame().T.copy()
+                    temp['df_index'] = temp.index
+                    ss.preguntas = temp.reset_index(drop=True)
+                    ss.idx = 0
+                    ss.respondida = False
+                    ss.ultima_correcta = None
+                    # Forzar re-ejecución para mostrar la UI principal con la pregunta elegida
+                    st.experimental_rerun()
+
 # =========================
 # Flujo principal
 # =========================
