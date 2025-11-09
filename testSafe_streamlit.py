@@ -226,21 +226,6 @@ else:
         return resultados
 
     st.sidebar.header("🔎 Buscador de preguntas")
-    uploaded_file = st.sidebar.file_uploader("Subir Excel (opcional)", type=["xlsx"]) 
-    # Si el usuario sube un archivo, intentar leerlo y reemplazar temporalmente 'df'
-    if uploaded_file is not None:
-        try:
-            df_upload = pd.read_excel(uploaded_file, engine='openpyxl')
-            # Asegurar columnas mínimas
-            if 'Veces Realizada' not in df_upload.columns:
-                df_upload['Veces Realizada'] = 0
-            if 'Errores' not in df_upload.columns:
-                df_upload['Errores'] = 0
-            df = df_upload.reset_index(drop=True)
-            st.sidebar.success(f"Archivo cargado: {getattr(uploaded_file, 'name', 'memoria')}")
-        except Exception as e:
-            st.sidebar.error(f"No se pudo leer el Excel: {e}")
-
     buscar_text = st.sidebar.text_input("Palabras clave")
     if st.sidebar.button("Buscar"):
         ss.search_results = buscar_preguntas(buscar_text, df)
