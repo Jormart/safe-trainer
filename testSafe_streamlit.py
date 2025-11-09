@@ -28,6 +28,14 @@ def cargar_datos():
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
     df['Pregunta'] = df['Pregunta'].astype(str).str.strip()
     df['Respuesta Correcta'] = df['Respuesta Correcta'].astype(str).str.strip()
+    # Detectar si hay múltiples respuestas (separadas por ; o ,)
+    df['Es Multiple'] = df['Respuesta Correcta'].str.contains('[;,]')
+    # Convertir respuestas múltiples a lista
+    df['Respuestas Correctas'] = df.apply(
+        lambda row: [r.strip() for r in row['Respuesta Correcta'].split(';' if ';' in str(row['Respuesta Correcta']) else ',')] 
+        if row['Es Multiple'] else [row['Respuesta Correcta']], 
+        axis=1
+    )
     return df
 
 df = cargar_datos()
@@ -128,19 +136,23 @@ def cb_responder():
     idx = ss.idx
     pregunta = ss.preguntas.iloc[idx]
     enunciado = pregunta['Pregunta']
-    correcta = pregunta['Respuesta Correcta']
+    es_multiple = pregunta['Es Multiple']
+    respuestas_correctas = pregunta['Respuestas Correctas']
 
-    seleccion_key = f"radio_{idx}"
+    seleccion_key = f"seleccion_{idx}"
     if seleccion_key not in ss:
-        # Si no hay selección, seed con la primera opción mostrada
-        opciones = ss.opciones_mezcladas.get(idx, [])
-        if not opciones:
-            return
-        ss[seleccion_key] = opciones[0]
+        return
+    
     seleccion = ss[seleccion_key]
+    if not isinstance(seleccion, list):
+        seleccion = [seleccion]
 
-    # *** Comparación robusta con normalización ***
-    es_correcta = normaliza(seleccion) == normaliza(correcta)
+    # Normalizar todas las respuestas para comparación
+    seleccion_norm = {normaliza(s) for s in seleccion}
+    correctas_norm = {normaliza(c) for c in respuestas_correctas}
+
+    # Comparación de conjuntos para respuestas múltiples
+    es_correcta = seleccion_norm == correctas_norm
     resultado = '✅' if es_correcta else '❌'
 
     registro = {
@@ -240,12 +252,17 @@ else:
             with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}"):
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
-                correcta = row.get('Respuesta Correcta', '')
+                respuestas_correctas = row.get('Respuestas Correctas', [])
+                respuestas_norm = {normaliza(r) for r in respuestas_correctas}
+                
                 for opt in opciones:
-                    if normaliza(opt) == normaliza(correcta):
+                    if normaliza(opt) in respuestas_norm:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
+                        
+                if row.get('Es Multiple', False):
+                    st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
                 if st.button("Usar esta pregunta en sesión", key=f"use_{i}"):
                     # Poner la pregunta seleccionada como nueva sesión de 1 pregunta
                     ss.modo = "Buscador"
@@ -286,13 +303,29 @@ elif ss.idx < len(ss.preguntas):
     st.subheader(f"Pregunta {ss.idx + 1} / {len(ss.preguntas)}")
     st.write(enunciado)
 
-    # Preseed de selección para evitar estados no definidos
-    seleccion_key = f"radio_{ss.idx}"
-    if seleccion_key not in ss and len(mezcladas) > 0:
-        ss[seleccion_key] = mezcladas[0]
+    # Determinar si es pregunta de respuesta múltiple
+    es_multiple = fila['Es Multiple']
+    
+    # Inicializar selección en el estado de la sesión
+    seleccion_key = f"seleccion_{ss.idx}"
+    if seleccion_key not in ss:
+        if es_multiple:
+            ss[seleccion_key] = []  # Lista vacía para checkboxes
+        else:
+            ss[seleccion_key] = mezcladas[0] if len(mezcladas) > 0 else ""
 
-    # Radio con clave única por pregunta
-    st.radio("Selecciona una opción:", mezcladas, key=seleccion_key)
+    # UI adaptativa según tipo de pregunta
+    if es_multiple:
+        st.write("**Selecciona todas las respuestas correctas:**")
+        # Usar checkboxes para múltiples respuestas
+        seleccion = []
+        for opcion in mezcladas:
+            if st.checkbox(opcion, key=f"check_{ss.idx}_{opcion}"):
+                seleccion.append(opcion)
+        ss[seleccion_key] = seleccion
+    else:
+        # Radio button para respuesta única
+        ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{ss.idx}")
 
     col1, col2 = st.columns([1, 1])
 
