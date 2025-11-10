@@ -279,25 +279,52 @@ else:
                 # Obtener y limpiar respuesta correcta
                 respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
 
-                def normalizar_texto(texto):
-                    """Normaliza el texto para comparación"""
-                    texto = str(texto).lower().strip()
-                    # Eliminar "by" al principio
-                    if texto.startswith('by '):
-                        texto = texto[3:]
-                    # Eliminar puntuación común
-                    for char in [',', '.', ':', ';']:
-                        texto = texto.replace(char, '')
-                    # Normalizar espacios
-                    texto = ' '.join(texto.split())
-                    return texto
-                
-                resp_norm = normalizar_texto(respuesta_correcta)
-                
-                # Mostrar opciones
+                def prepara_para_comparar(s: str) -> str:
+                    """Usar la normalización robusta y limpieza adicional para comparaciones.
+                    Devuelve una cadena en minúsculas, sin punctuation, sin slashes y con espacios colapsados.
+                    """
+                    s = normaliza(s)
+                    # normaliza() ya hace casefold y colapsa espacios
+                    # Sustituir slashes y paréntesis por espacios
+                    s = s.replace('/', ' ').replace('(', ' ').replace(')', ' ')
+                    # Quitar comillas y ciertos caracteres residuales
+                    s = s.replace('"', '').replace("'", '')
+                    # Quitar puntuación que quede
+                    s = re.sub(r'[,:;.!·…\-]+', ' ', s)
+                    s = re.sub(r'\s+', ' ', s).strip()
+                    return s
+
+                resp_norm = prepara_para_comparar(respuesta_correcta)
+
+                # Función de comparación flexible: igualdad, substring, token overlap o ratio
+                def es_coincidente(a: str, b: str, token_thresh: float = 0.6, ratio_thresh: float = 0.65) -> bool:
+                    if not a or not b:
+                        return False
+                    if a == b:
+                        return True
+                    if a in b or b in a:
+                        return True
+                    # Token overlap (fracción sobre el conjunto más pequeño)
+                    ta = set(a.split())
+                    tb = set(b.split())
+                    if ta and tb:
+                        inter = ta.intersection(tb)
+                        smaller = min(len(ta), len(tb))
+                        if smaller > 0 and (len(inter) / smaller) >= token_thresh:
+                            return True
+                    # Similaridad de secuencia como último recurso
+                    try:
+                        ratio = SequenceMatcher(None, a, b).ratio()
+                        if ratio >= ratio_thresh:
+                            return True
+                    except Exception:
+                        pass
+                    return False
+
+                # Mostrar opciones con la comprobación flexible
                 for opt in opciones:
-                    opt_norm = normalizar_texto(opt)
-                    if resp_norm in opt_norm or opt_norm in resp_norm:
+                    opt_norm = prepara_para_comparar(opt)
+                    if es_coincidente(resp_norm, opt_norm):
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
