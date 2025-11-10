@@ -246,12 +246,8 @@ else:
         qn = normaliza(query)
 
         def fila_coincide(row):
-            combinado = " ".join([
-                str(row.get('Pregunta', '')),
-                str(row.get('Opciones', '')),
-                str(row.get('Respuesta Correcta', ''))
-            ])
-            return qn in normaliza(combinado)
+            texto_pregunta = normaliza(str(row.get('Pregunta', '')))
+            return qn in texto_pregunta
 
         try:
             resultados = df_base[df_base.apply(fila_coincide, axis=1)].copy()
@@ -271,8 +267,8 @@ else:
         max_show = 30
         for i, (_, row) in enumerate(resultados.head(max_show).iterrows()):
             titulo = row.get('Pregunta', '')
-            with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}...", expanded=True):
-                st.markdown(f"**{row.get('Pregunta', '')}**")
+            with st.sidebar.expander(titulo, expanded=True):
+                st.markdown("---")
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 respuestas_correctas = row.get('Respuestas Correctas', [])
                 respuestas_norm = [normaliza(r) for r in respuestas_correctas]
