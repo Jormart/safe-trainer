@@ -276,29 +276,19 @@ else:
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
 
-                # Obtener respuesta correcta y opciones
+                # Mostrar la respuesta correcta para diagnóstico (temporal)
                 respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
+                st.write("---")
+                st.write("Debug - Respuesta correcta:", respuesta_correcta)
                 
-                def clean_for_comparison(text):
-                    """Limpieza específica para comparación de textos."""
-                    text = str(text)
-                    # Normalizar puntuación y espacios
-                    text = text.replace(',', '').replace('.', '')
-                    text = text.replace('\n', ' ').replace('\r', ' ')
-                    # Normalizar espacios
-                    text = ' '.join(text.split())
-                    # Convertir a minúsculas
-                    return text.lower().strip()
-                
-                resp_clean = clean_for_comparison(respuesta_correcta)
-                
-                # Comparar y mostrar opciones
+                # Mostrar opciones con comparación simple
                 for opt in opciones:
-                    opt_clean = clean_for_comparison(opt)
-                    if opt_clean == resp_clean:
+                    st.write("Debug - Comparando con:", opt)
+                    if opt.strip() == respuesta_correcta.strip():
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
+                st.write("---")
 
                 if row.get('Es Multiple', False):
                     st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
