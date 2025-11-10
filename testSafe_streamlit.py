@@ -246,12 +246,8 @@ else:
         qn = normaliza(query)
 
         def fila_coincide(row):
-            combinado = " ".join([
-                str(row.get('Pregunta', '')),
-                str(row.get('Opciones', '')),
-                str(row.get('Respuesta Correcta', ''))
-            ])
-            return qn in normaliza(combinado)
+            texto_pregunta = normaliza(str(row.get('Pregunta', '')))
+            return qn in texto_pregunta
 
         try:
             resultados = df_base[df_base.apply(fila_coincide, axis=1)].copy()
