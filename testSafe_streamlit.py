@@ -274,17 +274,27 @@ else:
             with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
-                respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
 
+                # Obtener la respuesta correcta tal cual viene del Excel
+                respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
+                respuesta_norm = normaliza(respuesta_correcta)
+
+                # Comparación robusta: normalizada exacta, substring o fuzzy pequeño
                 for opt in opciones:
-                    if opt == respuesta_correcta:
+                    opt_norm = normaliza(opt)
+                    is_match = (
+                        opt_norm == respuesta_norm
+                        or respuesta_norm in opt_norm
+                        or SequenceMatcher(None, opt_norm, respuesta_norm).ratio() >= 0.86
+                    )
+                    if is_match:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
-                        
+
                 if row.get('Es Multiple', False):
                     st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
-                # Botón de 'Usar esta pregunta en sesión' eliminado (no aportaba).
+            # Botón de 'Usar esta pregunta en sesión' eliminado (no aportaba).
 
 # =========================
 # Flujo principal
