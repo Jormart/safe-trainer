@@ -271,9 +271,8 @@ else:
         max_show = 30
         for i, (_, row) in enumerate(resultados.head(max_show).iterrows()):
             titulo = row.get('Pregunta', '')
-            with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}"):
-                st.write(row.get('Pregunta', ''))
-                opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
+            with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}...", expanded=True):
+                st.markdown(f"**{row.get('Pregunta', '')}**")
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 respuestas_correctas = row.get('Respuestas Correctas', [])
                 respuestas_norm = [normaliza(r) for r in respuestas_correctas]
