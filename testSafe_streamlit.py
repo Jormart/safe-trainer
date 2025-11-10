@@ -274,15 +274,10 @@ else:
             with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
-                respuestas_correctas = row.get('Respuestas Correctas', [])
-                respuestas_norm = [normaliza(r) for r in respuestas_correctas]
+                respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
 
-                # Debug temporal para ver valores
-                st.write("DEBUG - Respuestas correctas:", respuestas_correctas)
-                
                 for opt in opciones:
-                    st.write(f"DEBUG - Comparando opción: '{opt}'")
-                    if opt.strip() == str(respuestas_correctas[0]).strip():
+                    if opt == respuesta_correcta:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
