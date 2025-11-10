@@ -271,28 +271,18 @@ else:
         max_show = 30
         for i, (_, row) in enumerate(resultados.head(max_show).iterrows()):
             titulo = row.get('Pregunta', '')
-            with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}"):
+            with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
                 st.write(row.get('Pregunta', ''))
-                opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 respuestas_correctas = row.get('Respuestas Correctas', [])
                 respuestas_norm = [normaliza(r) for r in respuestas_correctas]
 
-                def matches(opt_text_norm: str, correct_norm_list) -> bool:
-                    # Flexible match: exact normalized match, substring, or high similarity
-                    for c in correct_norm_list:
-                        if c == opt_text_norm:
-                            return True
-                        if c in opt_text_norm or opt_text_norm in c:
-                            return True
-                        # Fuzzy match threshold
-                        if SequenceMatcher(None, c, opt_text_norm).ratio() >= 0.86:
-                            return True
-                    return False
+                def matches(opt_text: str, correct_list) -> bool:
+                    # Comparación exacta con la respuesta correcta
+                    return opt_text in correct_list
 
                 for opt in opciones:
-                    opt_norm = normaliza(opt)
-                    if matches(opt_norm, respuestas_norm):
+                    if matches(opt, respuestas_correctas):
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
