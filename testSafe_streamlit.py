@@ -28,17 +28,25 @@ def cargar_datos():
         df['Errores'] = 0
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
     
-    # Limpieza profunda de caracteres invisibles y formato
     def limpiar_texto(texto):
+        """Limpieza profunda y normalización de texto."""
         if not isinstance(texto, str):
             texto = str(texto)
+        # Normalización Unicode
+        texto = unicodedata.normalize('NFKC', texto)
+        # Eliminar caracteres invisibles
         texto = texto.replace('\u00A0', ' ')  # NBSP
         texto = texto.replace('\u200B', '')   # ZWSP
-        texto = texto.replace('\r', '')       # CR
-        texto = texto.replace('\n', '')       # LF al final
-        texto = texto.strip()
-        return texto
+        texto = texto.replace('\u2009', ' ')  # Thin space
+        texto = texto.replace('\u202F', ' ')  # Narrow NBSP
+        # Eliminar retornos de carro y tabs
+        texto = texto.replace('\r', ' ')
+        texto = texto.replace('\t', ' ')
+        # Colapsar espacios múltiples
+        texto = re.sub(r'\s+', ' ', texto)
+        return texto.strip()
     
+    # Aplicar limpieza a todas las columnas relevantes
     df['Pregunta'] = df['Pregunta'].apply(limpiar_texto)
     df['Respuesta Correcta'] = df['Respuesta Correcta'].apply(limpiar_texto)
     df['Opciones'] = df['Opciones'].apply(limpiar_texto)
@@ -287,21 +295,15 @@ else:
             with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
                 st.write(row.get('Pregunta', ''))
                 
-                # Procesar opciones con la misma limpieza que se usa en la carga
-                opciones_texto = str(row.get('Opciones', '')).replace('\u00A0', ' ').replace('\u200B', '')
-                opciones = [op.strip() for op in opciones_texto.split('\n') if op.strip()]
+                # Obtener respuesta correcta normalizada
+                respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
+                resp_norm = normaliza(respuesta_correcta)
                 
-                # Obtener y limpiar la respuesta correcta
-                respuesta_correcta = str(row.get('Respuesta Correcta', '')).replace('\u00A0', ' ').replace('\u200B', '').strip()
-                
-                # Debug temporal para ver valores exactos
-                st.write('Debug - Respuesta correcta:', [respuesta_correcta])
-                
-                # Comparación con depuración
+                # Procesar y mostrar opciones
+                opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 for opt in opciones:
-                    opt_limpia = opt.strip()
-                    st.write('Debug - Comparando:', [opt_limpia])
-                    if opt_limpia == respuesta_correcta:
+                    opt_norm = normaliza(opt)
+                    if opt_norm == resp_norm:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
