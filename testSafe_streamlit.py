@@ -243,10 +243,15 @@ else:
         """
         if not query or str(query).strip() == "":
             return pd.DataFrame(columns=df_base.columns)
+        # Limpiar comillas del término de búsqueda también
+        query = str(query).replace('"', '').replace('"', '').replace('"', '')
         qn = normaliza(query)
 
         def fila_coincide(row):
-            texto_pregunta = normaliza(str(row.get('Pregunta', '')))
+            texto_pregunta = str(row.get('Pregunta', ''))
+            # Quitar comillas y normalizar
+            texto_pregunta = texto_pregunta.replace('"', '').replace('"', '').replace('"', '')
+            texto_pregunta = normaliza(texto_pregunta)
             return qn in texto_pregunta
 
         try:
@@ -271,19 +276,26 @@ else:
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
 
-                # Obtener la respuesta correcta tal cual viene del Excel
+                # Obtener respuesta correcta y opciones
                 respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
-                respuesta_norm = normaliza(respuesta_correcta)
-
-                # Comparación robusta: normalizada exacta, substring o fuzzy pequeño
+                
+                def clean_for_comparison(text):
+                    """Limpieza específica para comparación de textos."""
+                    text = str(text)
+                    # Normalizar puntuación y espacios
+                    text = text.replace(',', '').replace('.', '')
+                    text = text.replace('\n', ' ').replace('\r', ' ')
+                    # Normalizar espacios
+                    text = ' '.join(text.split())
+                    # Convertir a minúsculas
+                    return text.lower().strip()
+                
+                resp_clean = clean_for_comparison(respuesta_correcta)
+                
+                # Comparar y mostrar opciones
                 for opt in opciones:
-                    opt_norm = normaliza(opt)
-                    is_match = (
-                        opt_norm == respuesta_norm
-                        or respuesta_norm in opt_norm
-                        or SequenceMatcher(None, opt_norm, respuesta_norm).ratio() >= 0.86
-                    )
-                    if is_match:
+                    opt_clean = clean_for_comparison(opt)
+                    if opt_clean == resp_clean:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
