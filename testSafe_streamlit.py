@@ -275,19 +275,12 @@ else:
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
 
-                # Obtener la respuesta correcta tal cual viene del Excel
+                # Obtener la respuesta correcta directamente del Excel
                 respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
-                respuesta_norm = normaliza(respuesta_correcta)
 
-                # Comparación robusta: normalizada exacta, substring o fuzzy pequeño
+                # Comparación directa con la respuesta exacta del Excel
                 for opt in opciones:
-                    opt_norm = normaliza(opt)
-                    is_match = (
-                        opt_norm == respuesta_norm
-                        or respuesta_norm in opt_norm
-                        or SequenceMatcher(None, opt_norm, respuesta_norm).ratio() >= 0.86
-                    )
-                    if is_match:
+                    if opt.strip() == respuesta_correcta:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
