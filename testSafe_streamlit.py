@@ -246,8 +246,12 @@ else:
         qn = normaliza(query)
 
         def fila_coincide(row):
-            texto_pregunta = normaliza(str(row.get('Pregunta', '')))
-            return qn in texto_pregunta
+            combinado = " ".join([
+                str(row.get('Pregunta', '')),
+                str(row.get('Opciones', '')),
+                str(row.get('Respuesta Correcta', ''))
+            ])
+            return qn in normaliza(combinado)
 
         try:
             resultados = df_base[df_base.apply(fila_coincide, axis=1)].copy()
@@ -267,8 +271,9 @@ else:
         max_show = 30
         for i, (_, row) in enumerate(resultados.head(max_show).iterrows()):
             titulo = row.get('Pregunta', '')
-            with st.sidebar.expander(titulo, expanded=True):
-                st.markdown("---")
+            with st.sidebar.expander(f"{i+1}. {str(titulo)[:80]}"):
+                st.write(row.get('Pregunta', ''))
+                opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
                 respuestas_correctas = row.get('Respuestas Correctas', [])
                 respuestas_norm = [normaliza(r) for r in respuestas_correctas]
@@ -287,9 +292,7 @@ else:
 
                 for opt in opciones:
                     opt_norm = normaliza(opt)
-                    # Comparación directa con las respuestas correctas normalizadas
-                    es_correcta = any(normaliza(rc) == opt_norm for rc in respuestas_correctas)
-                    if es_correcta:
+                    if matches(opt_norm, respuestas_norm):
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
