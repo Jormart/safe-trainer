@@ -27,29 +27,8 @@ def cargar_datos():
     if 'Errores' not in df.columns:
         df['Errores'] = 0
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
-    
-    def limpiar_texto(texto):
-        """Limpieza profunda y normalización de texto."""
-        if not isinstance(texto, str):
-            texto = str(texto)
-        # Normalización Unicode
-        texto = unicodedata.normalize('NFKC', texto)
-        # Eliminar caracteres invisibles
-        texto = texto.replace('\u00A0', ' ')  # NBSP
-        texto = texto.replace('\u200B', '')   # ZWSP
-        texto = texto.replace('\u2009', ' ')  # Thin space
-        texto = texto.replace('\u202F', ' ')  # Narrow NBSP
-        # Eliminar retornos de carro y tabs
-        texto = texto.replace('\r', ' ')
-        texto = texto.replace('\t', ' ')
-        # Colapsar espacios múltiples
-        texto = re.sub(r'\s+', ' ', texto)
-        return texto.strip()
-    
-    # Aplicar limpieza a todas las columnas relevantes
-    df['Pregunta'] = df['Pregunta'].apply(limpiar_texto)
-    df['Respuesta Correcta'] = df['Respuesta Correcta'].apply(limpiar_texto)
-    df['Opciones'] = df['Opciones'].apply(limpiar_texto)
+    df['Pregunta'] = df['Pregunta'].astype(str).str.strip()
+    df['Respuesta Correcta'] = df['Respuesta Correcta'].astype(str).str.strip()
     
     # Detectar preguntas múltiples por:
     # 1. Separadores en la respuesta (;,)
@@ -294,16 +273,21 @@ else:
             titulo = row.get('Pregunta', '')
             with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
                 st.write(row.get('Pregunta', ''))
-                
-                # Obtener respuesta correcta normalizada
-                respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
-                resp_norm = normaliza(respuesta_correcta)
-                
-                # Procesar y mostrar opciones
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
+
+                # Obtener la respuesta correcta tal cual viene del Excel
+                respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
+                respuesta_norm = normaliza(respuesta_correcta)
+
+                # Comparación robusta: normalizada exacta, substring o fuzzy pequeño
                 for opt in opciones:
                     opt_norm = normaliza(opt)
-                    if opt_norm == resp_norm:
+                    is_match = (
+                        opt_norm == respuesta_norm
+                        or respuesta_norm in opt_norm
+                        or SequenceMatcher(None, opt_norm, respuesta_norm).ratio() >= 0.86
+                    )
+                    if is_match:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
