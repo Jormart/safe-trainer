@@ -27,8 +27,21 @@ def cargar_datos():
     if 'Errores' not in df.columns:
         df['Errores'] = 0
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
-    df['Pregunta'] = df['Pregunta'].astype(str).str.strip()
-    df['Respuesta Correcta'] = df['Respuesta Correcta'].astype(str).str.strip()
+    
+    # Limpieza profunda de caracteres invisibles y formato
+    def limpiar_texto(texto):
+        if not isinstance(texto, str):
+            texto = str(texto)
+        texto = texto.replace('\u00A0', ' ')  # NBSP
+        texto = texto.replace('\u200B', '')   # ZWSP
+        texto = texto.replace('\r', '')       # CR
+        texto = texto.replace('\n', '')       # LF al final
+        texto = texto.strip()
+        return texto
+    
+    df['Pregunta'] = df['Pregunta'].apply(limpiar_texto)
+    df['Respuesta Correcta'] = df['Respuesta Correcta'].apply(limpiar_texto)
+    df['Opciones'] = df['Opciones'].apply(limpiar_texto)
     
     # Detectar preguntas múltiples por:
     # 1. Separadores en la respuesta (;,)
@@ -273,14 +286,22 @@ else:
             titulo = row.get('Pregunta', '')
             with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
                 st.write(row.get('Pregunta', ''))
-                opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
-
-                # Obtener la respuesta correcta directamente del Excel
-                respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
-
-                # Comparación directa con la respuesta exacta del Excel
+                
+                # Procesar opciones con la misma limpieza que se usa en la carga
+                opciones_texto = str(row.get('Opciones', '')).replace('\u00A0', ' ').replace('\u200B', '')
+                opciones = [op.strip() for op in opciones_texto.split('\n') if op.strip()]
+                
+                # Obtener y limpiar la respuesta correcta
+                respuesta_correcta = str(row.get('Respuesta Correcta', '')).replace('\u00A0', ' ').replace('\u200B', '').strip()
+                
+                # Debug temporal para ver valores exactos
+                st.write('Debug - Respuesta correcta:', [respuesta_correcta])
+                
+                # Comparación con depuración
                 for opt in opciones:
-                    if opt.strip() == respuesta_correcta:
+                    opt_limpia = opt.strip()
+                    st.write('Debug - Comparando:', [opt_limpia])
+                    if opt_limpia == respuesta_correcta:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
