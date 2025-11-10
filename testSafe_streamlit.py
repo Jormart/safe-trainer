@@ -287,7 +287,9 @@ else:
 
                 for opt in opciones:
                     opt_norm = normaliza(opt)
-                    if matches(opt_norm, respuestas_norm):
+                    # Comparación directa con las respuestas correctas normalizadas
+                    es_correcta = any(normaliza(rc) == opt_norm for rc in respuestas_correctas)
+                    if es_correcta:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
