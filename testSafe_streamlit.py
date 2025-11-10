@@ -277,12 +277,12 @@ else:
                 respuestas_correctas = row.get('Respuestas Correctas', [])
                 respuestas_norm = [normaliza(r) for r in respuestas_correctas]
 
-                def matches(opt_text: str, correct_list) -> bool:
-                    # Comparación exacta con la respuesta correcta
-                    return opt_text in correct_list
-
+                # Debug temporal para ver valores
+                st.write("DEBUG - Respuestas correctas:", respuestas_correctas)
+                
                 for opt in opciones:
-                    if matches(opt, respuestas_correctas):
+                    st.write(f"DEBUG - Comparando opción: '{opt}'")
+                    if opt.strip() == str(respuestas_correctas[0]).strip():
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
