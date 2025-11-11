@@ -22,12 +22,10 @@ TOP_K_ADAPTATIVO = 50  # pool prioritario para variedad en adaptativo
 # =========================
 file_path = ORIGINAL_FILE
 try:
-    from fix_excel import ensure_clean  # saneado interno
+    from fix_excel import ensure_clean
     file_path = ensure_clean(ORIGINAL_FILE) or ORIGINAL_FILE
 except Exception:
-    # Fallback silencioso al original; la app seguirá funcionando con
-    # el reagrupado en tiempo de ejecución en caso de formato irregular.
-    file_path = ORIGINAL_FILE
+    file_path = ORIGINAL_FILE  # silencioso
 
 # =========================
 # Normalización y utilidades
@@ -43,48 +41,37 @@ def normaliza(s: str) -> str:
     s = re.sub(r"[.;:]+$", "", s)
     return s
 
-def es_pregunta_multiple(row) -> bool:
-    """Detecta múltiple por ';' en la respuesta o por 'hints' en el enunciado (inglés/español)."""
-    pregunta = str(row.get('Pregunta', '')).lower()
-    respuesta = str(row.get('Respuesta Correcta', '')).strip()
-    hints = ['select two', 'select all', 'selecciona dos', 'selecciona todas']
-    return (';' in respuesta) or any(h in pregunta for h in hints)
+def split_respuestas(texto: str) -> list[str]:
+    return [x.strip() for x in str(texto or "").split(";") if str(x).strip()]
 
-def obtener_respuestas(row):
-    r = str(row.get('Respuesta Correcta', '')).strip()
-    return [x.strip() for x in r.split(';') if x.strip()]
-
-def reagrupa_opciones_crudas(texto_opciones: str, respuestas_correctas) -> list:
+def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> list[str]:
     """
-    Reagrupado ligero en tiempo de ejecución (protección extra).
-    Si ya encaja, devuelve tal cual; si no, intenta ventanas 2..3 términos.
+    Devuelve la(s) opción(es) canónica(s) (tal como aparecen en 'Opciones') que
+    corresponden a las 'Respuestas Correctas' dadas (tras normalizar).
+    Regla:
+      1) match por igualdad normalizada
+      2) si no, por contención (elige la opción más larga)
+      3) si no, devuelve la respuesta tal cual (último recurso)
     """
-    raw = [op.strip() for op in str(texto_opciones or "").split('\n') if op.strip()]
-    if not raw:
+    ops = [o.strip() for o in str(opciones_texto or "").split("\n") if o.strip()]
+    if not ops or not respuestas:
         return []
-    on = {normaliza(x) for x in raw}
-    rn = {normaliza(x) for x in respuestas_correctas}
-    if rn & on:
-        return raw
-
-    def agrupa(sz):
-        res, i = [], 0
-        while i < len(raw):
-            chunk = raw[i:i + sz]
-            if len(chunk) == sz:
-                cand = " ".join(chunk).replace(" - ", "-").replace("- ", "-")
-                res.append(cand)
-                i += sz
-            else:
-                res.append(" ".join(raw[i:]))
-                break
-        return res
-
-    for sz in (2, 3):
-        cand = agrupa(sz)
-        if {normaliza(x) for x in cand} & rn:
-            return cand
-    return raw
+    on = {normaliza(o): o for o in ops}  # norm -> original opción
+    can = []
+    for r in respuestas:
+        rn = normaliza(r)
+        if rn in on:
+            can.append(on[rn])
+            continue
+        # contención
+        cands = [(o, len(o)) for o in ops
+                 if (normaliza(o) in rn) or (rn in normaliza(o))]
+        if cands:
+            best = sorted(cands, key=lambda t: t[1], reverse=True)[0][0]
+            can.append(best)
+        else:
+            can.append(r)  # fallback
+    return can
 
 # =========================
 # Carga de datos
@@ -102,9 +89,16 @@ def cargar_datos():
     # Limpiar nulos básicos
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
 
-    # Marcar múltiple y respuestas como lista
-    df['Es Multiple'] = df.apply(es_pregunta_multiple, axis=1)
-    df['Respuestas Correctas'] = df.apply(obtener_respuestas, axis=1)
+    # Respuestas (lista) y Correctas Canónicas (opciones exactas)
+    df['Respuestas Correctas'] = df['Respuesta Correcta'].map(split_respuestas)
+    df['Correctas Canonicas'] = df.apply(
+        lambda r: map_respuestas_a_opciones(r['Opciones'], r['Respuestas Correctas']),
+        axis=1
+    )
+
+    # Detección MULTIPLE basada SOLO en datos coherentes (opciones ↔ respuestas)
+    df['Es Multiple'] = df['Correctas Canonicas'].map(lambda xs: len(set(xs)) > 1)
+
     return df
 
 df = cargar_datos()
@@ -161,8 +155,11 @@ def cb_responder():
     idx = ss.idx
     pregunta = ss.preguntas.iloc[idx]
     enunciado = pregunta['Pregunta']
-    respuestas_correctas = pregunta['Respuestas Correctas']
-    correcta = '; '.join(respuestas_correctas)
+
+    # Recalcular canónicas con las opciones que se muestran (por máxima coherencia)
+    correctas_canonicas = map_respuestas_a_opciones(
+        pregunta['Opciones'], pregunta['Respuestas Correctas']
+    )
 
     seleccion_key = f"seleccion_{idx}"
     if seleccion_key not in ss:
@@ -171,8 +168,9 @@ def cb_responder():
     if not isinstance(seleccion, list):
         seleccion = [seleccion]
 
+    # Comparar contra Correctas Canónicas (normalizadas)
     seleccion_norm = {normaliza(s) for s in seleccion}
-    correctas_norm = {normaliza(c) for c in respuestas_correctas}
+    correctas_norm = {normaliza(c) for c in correctas_canonicas}
     es_correcta = (seleccion_norm == correctas_norm)
     resultado = '✅' if es_correcta else '❌'
 
@@ -180,12 +178,12 @@ def cb_responder():
         'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'Pregunta': enunciado,
         'Respuesta Dada': seleccion,
-        'Respuesta Correcta': correcta,
+        'Respuesta Correcta': "; ".join(correctas_canonicas),
         'Resultado': resultado
     }
     ss.historial.append(registro)
 
-    # Guardar historial (silencioso)
+    # Guardar historial y métricas (silencioso)
     try:
         historial_df = pd.DataFrame([registro])
         if os.path.exists(historial_path):
@@ -195,7 +193,6 @@ def cb_responder():
     except Exception:
         pass
 
-    # Actualizar métricas y persistir (silencioso)
     try:
         df_idx = ss.preguntas.loc[idx, 'df_index']
         df.at[df_idx, 'Veces Realizada'] += 1
@@ -230,7 +227,7 @@ else:
     st.markdown(f"⌛ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
 
 # =========================
-# Sidebar - Buscador (se mantiene)
+# Sidebar - Buscador (marca ✅ TODAS las correctas; sin textos redundantes)
 # =========================
 def buscar_preguntas(query: str, df_base: pd.DataFrame) -> pd.DataFrame:
     if not query or str(query).strip() == "":
@@ -260,17 +257,19 @@ if 'search_results' in ss and ss.search_results is not None:
         titulo = row.get('Pregunta', '')
         with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
             st.write(row.get('Pregunta', ''))
-            opciones = reagrupa_opciones_crudas(row.get('Opciones', ''), obtener_respuestas(row))
-            resp_correcta = str(row.get('Respuesta Correcta', '')).strip()
-            resp_norm = normaliza(resp_correcta)
+            # Mapear canónicas para marcar TODAS las correctas con ✅
+            correctas_canonicas = map_respuestas_a_opciones(
+                row.get('Opciones', ''), split_respuestas(row.get('Respuesta Correcta', ''))
+            )
+            correctas_norm = {normaliza(c) for c in correctas_canonicas}
+
+            opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
             for opt in opciones:
-                opt_norm = normaliza(opt)
-                if opt_norm == resp_norm:
+                if normaliza(opt) in correctas_norm:
                     st.markdown(f"**✅ {opt}**")
                 else:
                     st.write(opt)
-            if row.get('Es Multiple', False):
-                st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
+            # (Eliminado) texto de aviso “esta pregunta requiere…” para evitar redundancias
 
 # =========================
 # Flujo principal
@@ -284,9 +283,9 @@ elif ss.idx < len(ss.preguntas):
     fila = ss.preguntas.iloc[ss.idx]
     enunciado = fila['Pregunta']
 
-    # Reagrupa opciones (protección extra)
-    opciones = reagrupa_opciones_crudas(fila['Opciones'], fila['Respuestas Correctas'])
-    correcta_texto = "; ".join(fila['Respuestas Correctas'])
+    # Opciones tal cual (CLEAN) y canónicas (por coherencia total)
+    opciones = [op.strip() for op in str(fila['Opciones']).split('\n') if op.strip()]
+    correctas_canonicas = map_respuestas_a_opciones(fila['Opciones'], fila['Respuestas Correctas'])
 
     # Mezclar opciones solo una vez
     if ss.idx not in ss.opciones_mezcladas:
@@ -299,19 +298,20 @@ elif ss.idx < len(ss.preguntas):
     st.subheader(f"Pregunta {ss.idx + 1} / {len(ss.preguntas)}")
     st.write(enunciado)
 
-    es_multiple = fila['Es Multiple']
+    es_multiple = len(set(correctas_canonicas)) > 1
     seleccion_key = f"seleccion_{ss.idx}"
     if seleccion_key not in ss:
         ss[seleccion_key] = [] if es_multiple else (mezcladas[0] if len(mezcladas) > 0 else "")
 
     if es_multiple:
-        st.write("**Selecciona todas las respuestas correctas:**")
+        # Pregunta múltiple -> checkboxes (sin mensajes redundantes)
         seleccion = []
         for opcion in mezcladas:
             if st.checkbox(opcion, key=f"check_{ss.idx}_{opcion}"):
                 seleccion.append(opcion)
         ss[seleccion_key] = seleccion
     else:
+        # Respuesta única -> radio
         ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{ss.idx}")
 
     col1, col2 = st.columns([1, 1])
@@ -326,7 +326,7 @@ elif ss.idx < len(ss.preguntas):
             if ss.ultima_correcta:
                 st.success("✅ ¡Correcto!")
             else:
-                st.error(f"❌ Incorrecto. La respuesta correcta era: {correcta_texto}")
+                st.error(f"❌ Incorrecto. La(s) respuesta(s) correcta(s): {'; '.join(correctas_canonicas)}")
     with col2:
         st.button(
             "Siguiente ➜",
@@ -335,7 +335,6 @@ elif ss.idx < len(ss.preguntas):
         )
 
 else:
-    # Resumen final
     st.subheader("📋 Resumen de la sesión")
     total = len(ss.historial)
     aciertos = sum(1 for h in ss.historial if h['Resultado'] == '✅')
