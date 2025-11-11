@@ -1,25 +1,36 @@
-# fix_excel.py
+# testSafe_streamlit.py
 # -*- coding: utf-8 -*-
-"""
-Saneado robusto del Excel de preguntas:
-
- - Normaliza Unicode/espacios/puntuación final.
- - Si 'Opciones' viene en una sola línea o con varias oraciones en la misma línea,
-   las divide en líneas con dos heurísticas:
-     (1) split por sentencia: (?<=[.!?])\s+(?=[A-Z])
-     (2) capital-split: [A-Z][^A-Z]+(?=(?: [A-Z]|$))
- - Reagrupa tokens cortos contiguos (ventana 2..6) SOLO si no son frases,
-   para casar exactamente con la 'Respuesta Correcta'.
- - Ajusta la 'Respuesta Correcta' a la opción real (o la añade si faltase).
- - Devuelve *_CLEAN.xlsx (uso silencioso desde la app).
-"""
-from __future__ import annotations
-import os, re, unicodedata
-from typing import List, Tuple
+import streamlit as st
 import pandas as pd
+import random
+import os
+from datetime import datetime, timedelta
+import re
+import unicodedata
 
-# ------------------ Normalización ------------------ #
-def _norm(s: str) -> str:
+# =========================
+# Configuración
+# =========================
+ORIGINAL_FILE = 'Agil - Copia de Preguntas_Examen.xlsx'
+historial_path = 'historial_sesiones.csv'
+num_preguntas_por_sesion = 10
+tiempo_total = timedelta(minutes=90)
+TOP_K_ADAPTATIVO = 50
+
+# =========================
+# Saneado interno (usa *_CLEAN.xlsx)
+# =========================
+file_path = ORIGINAL_FILE
+try:
+    from fix_excel import ensure_clean
+    file_path = ensure_clean(ORIGINAL_FILE) or ORIGINAL_FILE
+except Exception:
+    file_path = ORIGINAL_FILE
+
+# =========================
+# Utilidades
+# =========================
+def normaliza(s: str) -> str:
     if s is None:
         return ""
     s = unicodedata.normalize("NFKC", str(s))
@@ -29,173 +40,201 @@ def _norm(s: str) -> str:
     s = re.sub(r"[.;:]+$", "", s)
     return s
 
-def _split_answers(ans: str) -> List[str]:
-    ans = str(ans or "").strip()
-    return [a.strip() for a in ans.split(";") if a.strip()]
+def split_respuestas(texto: str) -> list[str]:
+    return [x.strip() for x in str(texto or "").split(";") if x.strip()]
 
-# ------------------ Heurísticas de “frase” ------------------ #
-def _is_sentence(line: str) -> bool:
-    txt = (line or "").strip()
-    if not txt:
-        return False
-    words = txt.split()
-    return (len(txt) >= 20 or len(words) >= 4) or bool(re.search(r"[.!?]$", txt))
-
-def _mostly_sentences(lines: List[str]) -> bool:
-    if not lines:
-        return False
-    sents = sum(1 for l in lines if _is_sentence(l))
-    return sents >= max(1, int(0.6 * len(lines)))
-
-# ------------------ Split de opciones “pegadas” ------------------ #
-_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
-
-def _explode_compounded_options(options_text: str) -> List[str]:
-    """
-    Asegura una opción por línea:
-      1) si hay '\n' y cada línea ya parece opción -> devolver tal cual
-      2) probar split por oraciones
-      3) capital-split: [A-Z] ... hasta la siguiente [A-Z] (separado por espacio)
-    """
-    raw = [l.strip() for l in str(options_text or "").split("\n") if l.strip()]
-    if not raw:
+def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> list[str]:
+    ops = [o.strip() for o in str(opciones_texto or "").split("\n") if o.strip()]
+    if not ops or not respuestas:
         return []
-
-    if len(raw) >= 2 and not any(_SENT_SPLIT.search(l) for l in raw):
-        # ya hay varias líneas; si parecen oraciones, dejamos tal cual
-        return raw
-
-    # 1) split por oraciones en cada línea
-    parts: List[str] = []
-    changed = False
-    for l in raw:
-        sents = [p.strip() for p in _SENT_SPLIT.split(l) if p.strip()]
-        if len(sents) >= 2:
-            parts.extend(sents); changed = True
-        else:
-            parts.append(l)
-    if changed:
-        return parts
-
-    # 2) capital-split si seguimos “pegados”
-    # ejemplo: "Define the enterprise strategy Establish lean budgets Align strategy..."
-    joined = " ".join(raw)
-    caps = re.findall(r'[A-Z][^A-Z]+(?=(?: [A-Z]|$))', joined)
-    caps = [c.strip() for c in caps if c.strip()]
-    if len(caps) >= 2:
-        return caps
-
-    return raw
-
-# ------------------ Re-agrupado “tokens cortos” (2..6) ------------------ #
-def _regroup_tokens_if_needed(raw_text: str, answers: List[str]) -> List[str]:
-    """Reagrupa SOLO si no son frases (evita unir oraciones en mega-opciones)."""
-    raw = [l.strip() for l in str(raw_text or "").split("\n") if l.strip()]
-    if not raw:
-        return []
-
-    if answers and {_norm(x) for x in answers}.issubset({_norm(o) for o in raw}):
-        return raw
-
-    if _mostly_sentences(raw):
-        return raw
-
-    changed = True
-    max_win = 6
-    while changed:
-        changed = False
-        for ans in answers:
-            ansn = _norm(ans)
-            if ansn in {_norm(x) for x in raw}:
-                continue
-            found = False
-            for start in range(len(raw)):
-                for win in range(2, max_win + 1):
-                    end = start + win
-                    if end > len(raw): break
-                    cand = " ".join(raw[start:end]).replace(" - ", "-").replace("- ", "-")
-                    if _norm(cand) == ansn:
-                        raw = raw[:start] + [cand] + raw[end:]
-                        changed, found = True, True
-                        break
-                if found: break
-        if not raw: break
-    return raw
-
-# ------------------ Corrección semántica ------------------ #
-def _semantic_fix_row(options: List[str], answers: List[str]) -> Tuple[List[str], List[str], bool, int]:
-    on = {_norm(o) for o in options}
-    new_answers = answers.copy()
-    changed_answer = False
-    added_options = 0
-    for j, a in enumerate(answers):
-        an = _norm(a)
-        if an in on: 
+    on = {normaliza(o): o for o in ops}
+    can = []
+    for r in respuestas:
+        rn = normaliza(r)
+        if rn in on:
+            can.append(on[rn])
             continue
-        # contención (elige la opción más larga)
-        cands = [o for o in options if (_norm(o) in an) or (an in _norm(o))]
+        cands = [(o, len(o)) for o in ops if (normaliza(o) in rn) or (rn in normaliza(o))]
         if cands:
-            best = max(cands, key=len)
-            new_answers[j] = best
-            changed_answer = True
+            best = sorted(cands, key=lambda t: t[1], reverse=True)[0][0]
+            can.append(best)
         else:
-            if a not in options:
-                options.append(a)
-                on.add(an)
-                added_options += 1
-    return options, new_answers, changed_answer, added_options
+            can.append(r)
+    return can
 
-# ------------------ Proceso principal ------------------ #
-def _process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    for col in ("Veces Realizada", "Errores"):
-        if col not in df.columns:
-            df[col] = 0
-
-    for i, row in df.iterrows():
-        numero = row.get("Nº", "")
-        opts_txt = str(row.get("Opciones", ""))
-        answers  = _split_answers(row.get("Respuesta Correcta", ""))
-
-        # (A) Siempre intentar “explotar” opciones pegadas (una opción por línea)
-        opts_lines = _explode_compounded_options(opts_txt)
-
-        # (B) Para todas, solo si parecen tokens cortos, intentar re-agrupado 2..6
-        opciones = _regroup_tokens_if_needed("\n".join(opts_lines), answers)
-
-        # (C) Corrección semántica final
-        opciones, answers_fixed, changed_ans, _ = _semantic_fix_row(opciones, answers)
-
-        df.at[i, "Opciones"] = "\n".join(opciones)
-        if changed_ans:
-            df.at[i, "Respuesta Correcta"] = "; ".join(answers_fixed)
-
+# =========================
+# Carga de datos
+# =========================
+@st.cache_data
+def cargar_datos():
+    df = pd.read_excel(file_path, engine='openpyxl')
+    if 'Veces Realizada' not in df.columns:
+        df['Veces Realizada'] = 0
+    if 'Errores' not in df.columns:
+        df['Errores'] = 0
+    df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
+    df['Respuestas Correctas'] = df['Respuesta Correcta'].map(split_respuestas)
+    df['Correctas Canonicas'] = df.apply(
+        lambda r: map_respuestas_a_opciones(r['Opciones'], r['Respuestas Correctas']),
+        axis=1
+    )
+    df['Es Multiple'] = df['Correctas Canonicas'].map(lambda xs: len(set(xs)) > 1)
     return df
 
-def ensure_clean(in_path: str, out_path: str | None = None, backup: bool = True) -> str:
-    if out_path is None:
-        base, ext = os.path.splitext(in_path)
-        out_path = f"{base}_CLEAN{ext}"
-    backup_path = None
-    if backup:
-        base, ext = os.path.splitext(in_path)
-        backup_path = f"{base}_backup{ext}"
+df = cargar_datos()
+
+# =========================
+# Estado de sesión
+# =========================
+ss = st.session_state
+if 'inicio' not in ss: ss.inicio = datetime.now()
+if 'idx' not in ss: ss.idx = 0
+if 'historial' not in ss: ss.historial = []
+if 'preguntas' not in ss: ss.preguntas = None
+if 'modo' not in ss: ss.modo = None
+if 'opciones_mezcladas' not in ss: ss.opciones_mezcladas = {}
+if 'respondida' not in ss: ss.respondida = False
+if 'ultima_correcta' not in ss: ss.ultima_correcta = None
+
+# =========================
+# Lógica
+# =========================
+def preparar_preguntas(df_base, modo, n):
+    if modo == "Adaptativo":
+        base = df_base.sort_values(by=['Errores', 'Veces Realizada'], ascending=[False, True])
+        k = min(TOP_K_ADAPTATIVO, len(base))
+        top_k = base.head(k).copy()
+        top_k['df_index'] = top_k.index
+        return top_k.sample(n=min(n, len(top_k)), random_state=None).reset_index(drop=True)
+    else:
+        aleatorias = df_base.sample(n=min(n, len(df_base)), random_state=None).copy()
+        aleatorias['df_index'] = aleatorias.index
+        return aleatorias.reset_index(drop=True)
+
+def cb_reiniciar(): ss.clear()
+
+def cb_iniciar(modo_select):
+    ss.modo = modo_select
+    ss.preguntas = preparar_preguntas(df, modo_select, num_preguntas_por_sesion)
+    ss.inicio = datetime.now()
+    ss.idx = 0
+    ss.respondida = False
+    ss.ultima_correcta = None
+    ss.opciones_mezcladas = {}
+
+def cb_responder():
+    idx = ss.idx
+    pregunta = ss.preguntas.iloc[idx]
+    correctas_canonicas = map_respuestas_a_opciones(pregunta['Opciones'], pregunta['Respuestas Correctas'])
+    seleccion_key = f"seleccion_{idx}"
+    if seleccion_key not in ss: return
+    seleccion = ss[seleccion_key]
+    if not isinstance(seleccion, list): seleccion = [seleccion]
+    seleccion_norm = {normaliza(s) for s in seleccion}
+    correctas_norm = {normaliza(c) for c in correctas_canonicas}
+    es_correcta = (seleccion_norm == correctas_norm)
+    registro = {
+        'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'Pregunta': pregunta['Pregunta'],
+        'Respuesta Dada': seleccion,
+        'Respuesta Correcta': "; ".join(correctas_canonicas),
+        'Resultado': '✅' if es_correcta else '❌'
+    }
+    ss.historial.append(registro)
     try:
-        if os.path.exists(out_path) and os.path.getmtime(out_path) >= os.path.getmtime(in_path):
-            return out_path
-    except Exception:
-        pass
-
-    df = pd.read_excel(in_path, engine="openpyxl")
+        historial_df = pd.DataFrame([registro])
+        if os.path.exists(historial_path):
+            historial_df.to_csv(historial_path, mode='a', header=False, index=False)
+        else:
+            historial_df.to_csv(historial_path, index=False)
+    except: pass
     try:
-        if backup and (not os.path.exists(backup_path)):
-            df.to_excel(backup_path, index=False, engine="openpyxl")
-    except Exception:
-        pass
+        df_idx = ss.preguntas.loc[idx, 'df_index']
+        df.at[df_idx, 'Veces Realizada'] += 1
+        if es_correcta:
+            if df.at[df_idx, 'Errores'] > 0: df.at[df_idx, 'Errores'] -= 1
+            ss.ultima_correcta = True
+        else:
+            df.at[df_idx, 'Errores'] += 1
+            ss.ultima_correcta = False
+        df.to_excel(file_path, index=False)
+    except: pass
+    ss.respondida = True
 
-    df2 = _process_dataframe(df)
-    df2.to_excel(out_path, index=False, engine="openpyxl")
-    return out_path
+def cb_siguiente():
+    ss.idx += 1
+    ss.respondida = False
+    ss.ultima_correcta = None
 
-if __name__ == "__main__":
-    DEFAULT_FILE = "Agil - Copia de Preguntas_Examen.xlsx"
-    ensure_clean(DEFAULT_FILE)
+# =========================
+# UI
+# =========================
+st.title("🧠 Entrenador SAFe - Sesión de preguntas")
+tiempo_restante = tiempo_total - (datetime.now() - ss.inicio)
+if tiempo_restante.total_seconds() <= 0:
+    st.error("⏰ ¡Tiempo agotado!")
+    st.button("🔄 Reiniciar sesión", on_click=cb_reiniciar)
+    st.stop()
+else:
+    st.markdown(f"⌛ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
+
+# Sidebar Buscador
+st.sidebar.header("🔎 Buscador de preguntas")
+buscar_text = st.sidebar.text_input("Palabras clave")
+if st.sidebar.button("Buscar"):
+    ss.search_results = df[df.apply(lambda r: buscar_text.lower() in str(r['Pregunta']).lower(), axis=1)]
+if 'search_results' in ss and ss.search_results is not None:
+    resultados = ss.search_results
+    st.sidebar.write(f"Resultados: {len(resultados)}")
+    for i, (_, row) in enumerate(resultados.head(30).iterrows()):
+        with st.sidebar.expander(f"{i+1}. {row['Pregunta']}"):
+            correctas_canonicas = map_respuestas_a_opciones(row['Opciones'], row['Respuestas Correctas'])
+            correctas_norm = {normaliza(c) for c in correctas_canonicas}
+            for opt in [o.strip() for o in row['Opciones'].split('\n') if o.strip()]:
+                if normaliza(opt) in correctas_norm:
+                    st.markdown(f"**✅ {opt}**")
+                else:
+                    st.write(opt)
+
+# Flujo principal
+if ss.modo is None:
+    st.subheader("Selecciona el modo:")
+    modo = st.radio("Modo:", ["Adaptativo", "Aleatorio puro"])
+    st.button("Iniciar sesión", on_click=cb_iniciar, args=(modo,))
+elif ss.idx < len(ss.preguntas):
+    fila = ss.preguntas.iloc[ss.idx]
+    opciones = [o.strip() for o in fila['Opciones'].split('\n') if o.strip()]
+    correctas_canonicas = map_respuestas_a_opciones(fila['Opciones'], fila['Respuestas Correctas'])
+    if ss.idx not in ss.opciones_mezcladas:
+        mezcladas = opciones.copy(); random.shuffle(mezcladas); ss.opciones_mezcladas[ss.idx] = mezcladas
+    else:
+        mezcladas = ss.opciones_mezcladas[ss.idx]
+    st.subheader(f"Pregunta {ss.idx+1}/{len(ss.preguntas)}")
+    st.write(fila['Pregunta'])
+    es_multiple = len(set(correctas_canonicas)) > 1
+    seleccion_key = f"seleccion_{ss.idx}"
+    if seleccion_key not in ss:
+        ss[seleccion_key] = [] if es_multiple else (mezcladas[0] if mezcladas else "")
+    if es_multiple:
+        seleccion = []
+        for opcion in mezcladas:
+            if st.checkbox(opcion, key=f"check_{ss.idx}_{opcion}"): seleccion.append(opcion)
+        ss[seleccion_key] = seleccion
+    else:
+        ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.button("Responder", on_click=cb_responder, disabled=ss.respondida)
+        if ss.respondida:
+            if ss.ultima_correcta: st.success("✅ ¡Correcto!")
+            else: st.error(f"❌ Incorrecto. Correctas: {'; '.join(correctas_canonicas)}")
+    with col2:
+        st.button("Siguiente ➜", on_click=cb_siguiente)
+else:
+    st.subheader("📋 Resumen")
+    total = len(ss.historial)
+    aciertos = sum(1 for h in ss.historial if h['Resultado'] == '✅')
+    errores = total - aciertos
+    st.write(f"Total: {total} | ✅ {aciertos} | ❌ {errores} | % {round((aciertos/total)*100,2) if total else 0}")
+    st.dataframe(pd.DataFrame(ss.historial))
+    st.button("🔄 Reiniciar sesión", on_click=cb_reiniciar)
