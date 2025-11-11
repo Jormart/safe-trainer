@@ -185,7 +185,7 @@ def cb_responder():
     }
     ss.historial.append(registro)
 
-    # Guardar historial
+    # Guardar historial (silencioso)
     try:
         historial_df = pd.DataFrame([registro])
         if os.path.exists(historial_path):
@@ -193,9 +193,9 @@ def cb_responder():
         else:
             historial_df.to_csv(historial_path, index=False)
     except Exception:
-        pass  # silencioso
+        pass
 
-    # Actualizar métricas y persistir
+    # Actualizar métricas y persistir (silencioso)
     try:
         df_idx = ss.preguntas.loc[idx, 'df_index']
         df.at[df_idx, 'Veces Realizada'] += 1
@@ -208,7 +208,7 @@ def cb_responder():
             ss.ultima_correcta = False
         df.to_excel(file_path, index=False)
     except Exception:
-        pass  # silencioso
+        pass
 
     ss.respondida = True
 
@@ -350,5 +350,5 @@ else:
     try:
         df.to_excel(file_path, index=False)
     except Exception:
-        pass  # silencioso
+        pass
     st.button("🔄 Reiniciar sesión", key="btn_reiniciar_final", on_click=cb_reiniciar)
