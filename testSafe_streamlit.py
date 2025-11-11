@@ -41,8 +41,10 @@ def normaliza(s: str) -> str:
     s = re.sub(r"[.;:]+$", "", s)
     return s
 
+
 def split_respuestas(texto: str) -> list[str]:
     return [x.strip() for x in str(texto or "").split(";") if str(x).strip()]
+
 
 def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> list[str]:
     """
@@ -64,8 +66,7 @@ def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> lis
             can.append(on[rn])
             continue
         # contención
-        cands = [(o, len(o)) for o in ops
-                 if (normaliza(o) in rn) or (rn in normaliza(o))]
+        cands = [(o, len(o)) for o in ops if (normaliza(o) in rn) or (rn in normaliza(o))]
         if cands:
             best = sorted(cands, key=lambda t: t[1], reverse=True)[0][0]
             can.append(best)
@@ -74,35 +75,30 @@ def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> lis
     return can
 
 # =========================
-# Carga de datos
+# Carga de datos (con cache invalidable por ruta + mtime)
 # =========================
-@st.cache_data
-def cargar_datos():
-    df = pd.read_excel(file_path, engine='openpyxl')
-
+@st.cache_data(show_spinner=False)
+def cargar_datos(path: str, mtime: float):
+    # mtime se usa para invalidar la cache cuando cambia el archivo
+    df = pd.read_excel(path, engine='openpyxl')
     # Asegurar métricas
     if 'Veces Realizada' not in df.columns:
         df['Veces Realizada'] = 0
     if 'Errores' not in df.columns:
         df['Errores'] = 0
-
     # Limpiar nulos básicos
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
-
     # Respuestas (lista) y Correctas Canónicas (opciones exactas)
     df['Respuestas Correctas'] = df['Respuesta Correcta'].map(split_respuestas)
     df['Correctas Canonicas'] = df.apply(
         lambda r: map_respuestas_a_opciones(r['Opciones'], r['Respuestas Correctas']),
         axis=1
     )
-
     # Detección MULTIPLE basada SOLO en datos coherentes (opciones ↔ respuestas)
     df['Es Multiple'] = df['Correctas Canonicas'].map(lambda xs: len(set(xs)) > 1)
-
     return df
 
-df = cargar_datos()
-
+df = cargar_datos(file_path, os.path.getmtime(file_path))  # ← invalida si cambia el CLEAN
 # =========================
 # Estado de sesión
 # =========================
@@ -139,23 +135,25 @@ def preparar_preguntas(df_base: pd.DataFrame, modo: str, n: int) -> pd.DataFrame
         aleatorias['df_index'] = aleatorias.index
         return aleatorias.reset_index(drop=True)
 
+
 def cb_reiniciar():
     ss.clear()
 
-def cb_iniciar(modo_select):
+
+def cb_iniciar(modo_select, n_pregs):
     ss.modo = modo_select
-    ss.preguntas = preparar_preguntas(df, modo_select, num_preguntas_por_sesion)
+    ss.preguntas = preparar_preguntas(df, modo_select, n_pregs)
     ss.inicio = datetime.now()
     ss.idx = 0
     ss.respondida = False
     ss.ultima_correcta = None
     ss.opciones_mezcladas = {}
 
+
 def cb_responder():
     idx = ss.idx
     pregunta = ss.preguntas.iloc[idx]
     enunciado = pregunta['Pregunta']
-
     # Recalcular canónicas con las opciones que se muestran (por máxima coherencia)
     correctas_canonicas = map_respuestas_a_opciones(
         pregunta['Opciones'], pregunta['Respuestas Correctas']
@@ -203,11 +201,13 @@ def cb_responder():
         else:
             df.at[df_idx, 'Errores'] += 1
             ss.ultima_correcta = False
+        # Persistir sobre el CLEAN
         df.to_excel(file_path, index=False)
     except Exception:
         pass
 
     ss.respondida = True
+
 
 def cb_siguiente():
     ss.idx += 1
@@ -218,27 +218,30 @@ def cb_siguiente():
 # UI - Cabecera
 # =========================
 st.title("🧠 Entrenador SAFe - Sesión de preguntas")
+
 tiempo_restante = tiempo_total - (datetime.now() - ss.inicio)
 if tiempo_restante.total_seconds() <= 0:
     st.error("⏰ ¡Tiempo agotado! La sesión ha finalizado.")
     st.button("🔄 Reiniciar sesión", key="btn_reiniciar_timeout", on_click=cb_reiniciar)
     st.stop()
 else:
-    st.markdown(f"⌛ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
+    st.markdown(f"⏳ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
 
 # =========================
-# Sidebar - Buscador (marca ✅ TODAS las correctas; sin textos redundantes)
+# Sidebar - Buscador
 # =========================
 def buscar_preguntas(query: str, df_base: pd.DataFrame) -> pd.DataFrame:
     if not query or str(query).strip() == "":
         return pd.DataFrame(columns=df_base.columns)
     qn = str(query).strip().lower()
+
     def fila_coincide(row):
         texto_pregunta = str(row.get('Pregunta', '')).lower()
         texto_opciones = str(row.get('Opciones', '')).lower()
         texto_respuesta = str(row.get('Respuesta Correcta', '')).lower()
-        texto_numero = str(row.get('Nº', '')).lower()
+        texto_numero = str(row.get('Nº', row.get('N\u00ba', ''))).lower()
         return (qn in texto_pregunta or qn in texto_opciones or qn in texto_respuesta or qn == texto_numero)
+
     try:
         return df_base[df_base.apply(fila_coincide, axis=1)].copy()
     except Exception:
@@ -262,23 +265,24 @@ if 'search_results' in ss and ss.search_results is not None:
                 row.get('Opciones', ''), split_respuestas(row.get('Respuesta Correcta', ''))
             )
             correctas_norm = {normaliza(c) for c in correctas_canonicas}
-
             opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
             for opt in opciones:
                 if normaliza(opt) in correctas_norm:
                     st.markdown(f"**✅ {opt}**")
                 else:
                     st.write(opt)
-            # (Eliminado) texto de aviso “esta pregunta requiere…” para evitar redundancias
 
 # =========================
 # Flujo principal
 # =========================
 if ss.modo is None:
     st.subheader("Selecciona el modo de preguntas:")
-    modo = st.radio("Modo:", ["Adaptativo", "Aleatorio puro"], key="modo_selector")
-    st.button("Iniciar sesión", key="btn_iniciar", on_click=cb_iniciar, args=(modo,))
-
+    cols = st.columns([1, 1])
+    with cols[0]:
+        modo = st.radio("Modo:", ["Adaptativo", "Aleatorio puro"], key="modo_selector")
+    with cols[1]:
+        n_pregs = st.number_input("Nº preguntas", min_value=1, max_value=50, value=num_preguntas_por_sesion, step=1)
+    st.button("Iniciar sesión", key="btn_iniciar", on_click=cb_iniciar, args=(modo, n_pregs))
 elif ss.idx < len(ss.preguntas):
     fila = ss.preguntas.iloc[ss.idx]
     enunciado = fila['Pregunta']
@@ -314,7 +318,7 @@ elif ss.idx < len(ss.preguntas):
         # Respuesta única -> radio
         ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{ss.idx}")
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         st.button(
             "Responder",
@@ -322,17 +326,28 @@ elif ss.idx < len(ss.preguntas):
             on_click=cb_responder,
             disabled=ss.respondida
         )
-        if ss.respondida:
-            if ss.ultima_correcta:
-                st.success("✅ ¡Correcto!")
-            else:
-                st.error(f"❌ Incorrecto. La(s) respuesta(s) correcta(s): {'; '.join(correctas_canonicas)}")
     with col2:
         st.button(
             "Siguiente ➜",
             key=f"btn_siguiente_{ss.idx}",
             on_click=cb_siguiente
         )
+    with col3:
+        # Descarga rápida del historial de la sesión en curso
+        if ss.historial:
+            hist_df = pd.DataFrame(ss.historial)
+            st.download_button(
+                "⬇️ Descargar sesión (CSV)",
+                data=hist_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"historial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+            )
+
+    if ss.respondida:
+        if ss.ultima_correcta:
+            st.success("✅ ¡Correcto!")
+        else:
+            st.error(f"❌ Incorrecto. La(s) respuesta(s) correcta(s): {'; '.join(correctas_canonicas)}")
 
 else:
     st.subheader("📋 Resumen de la sesión")

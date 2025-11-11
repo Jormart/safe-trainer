@@ -3,29 +3,36 @@
 """
 Saneado robusto del Excel de preguntas:
  - Divide en líneas las celdas de 'Opciones' que contengan varias oraciones en una sola línea.
- - Reagrupa 'palabra-por-línea' a frases (ventana contigua 2..6) **solo** cuando son tokens cortos.
+ - Recompone líneas “envueltas” (continuaciones) que parten una misma frase en varias líneas.
+ - Reagrupa 'palabra-por-línea' a frases (ventana 2..6) **solo** cuando son tokens cortos.
  - Evita reagrupado si ya son oraciones (para no crear mega-opciones).
  - Para Nº 316..335, fuerza el auto-split cuando detecta frases pegadas (caso Solution Vision).
  - Garantiza que 'Respuesta Correcta' exista exactamente en 'Opciones' (ajusta/añade).
  - Devuelve la ruta del fichero *_CLEAN.xlsx a usar en la app (sin prints).
 """
 from __future__ import annotations
+
 import os
 import re
 import unicodedata
 from typing import List, Tuple
+
 import pandas as pd
 
+# -------------------- Normalización -------------------- #
+_NBSP_RE = re.compile(r"[\u00A0\u2009\u2007\u202F\u200B\u200C\u200D\uFEFF]")
+_TRAIL_PUNCT_RE = re.compile(r"[.;:]+$")  # puntos finales comunes
+_WS_RE = re.compile(r"\s+")
 
-# ------------------ Normalización ------------------ #
+
 def _norm(s: str) -> str:
     if s is None:
         return ""
     s = unicodedata.normalize("NFKC", str(s))
-    s = re.sub(r"[\u00A0\u2009\u2007\u202F\u200B\u200C\u200D\uFEFF]", "", s)
+    s = _NBSP_RE.sub("", s)
     s = s.replace("\r", " ").replace("\t", " ")
-    s = re.sub(r"\s+", " ", s).strip().casefold()
-    s = re.sub(r"[.;:]+$", "", s)  # quita puntuación final común
+    s = _WS_RE.sub(" ", s).strip().casefold()
+    s = _TRAIL_PUNCT_RE.sub("", s)
     return s
 
 
@@ -34,11 +41,11 @@ def _split_answers(ans: str) -> List[str]:
     return [a.strip() for a in ans.split(";") if a.strip()]
 
 
-# ------------------ Detección de "frase" ------------------ #
+# -------------------- Detección de "frase" -------------------- #
 def _is_sentence(line: str) -> bool:
     """
-    Heurística simple: lo consideramos 'frase' si supera cierto umbral de longitud/palabras
-    o termina en . ! ?  (evita reagrupados sobre líneas ya completas).
+    Heurística simple: consideramos 'frase' si supera cierto umbral de longitud/palabras
+    o termina en . ! ? (evita reagrupados sobre líneas ya completas).
     """
     txt = (line or "").strip()
     if not txt:
@@ -54,20 +61,21 @@ def _mostly_sentences(lines: List[str]) -> bool:
     return sents >= max(1, int(0.6 * len(lines)))  # mayoría
 
 
-# ------------------ Auto-split de frases ------------------ #
-# Separador: fin de oración (.!?), espacios, inicio de probable frase (Mayúscula, dígito, paréntesis o comillas)
-_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(\"“])")
+# -------------------- Auto-split de oraciones -------------------- #
+# separa al ver fin de oración + espacios + inicio con Mayúscula/dígito/(" o “
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\(\"“])")
+
 
 def _split_sentences_if_needed(options_text: str) -> List[str]:
     """
     Si 'Opciones' trae varias frases pegadas en una línea, se separan en varias líneas.
-    Conserva la puntuación, evita crear mega-opciones.
+    Conserva la puntuación y evita crear mega-opciones.
     """
     raw_lines = [l.strip() for l in str(options_text or "").split("\n") if l.strip()]
     if not raw_lines:
         return []
 
-    # Caso 1: todo en una única línea con varias oraciones
+    # Caso 1: una única línea con varias oraciones
     if len(raw_lines) == 1:
         line = raw_lines[0]
         parts = [p.strip() for p in _SENT_SPLIT.split(line) if p.strip()]
@@ -84,11 +92,62 @@ def _split_sentences_if_needed(options_text: str) -> List[str]:
             changed = True
         else:
             result.append(l)
-
     return result if changed else raw_lines
 
 
-# ------------------ Re-agrupado SOLO para tokens cortos ------------------ #
+# -------------------- Re-composición de líneas "envueltas" -------------------- #
+# Palabras que suelen indicar continuación al inicio de línea
+_CONT_START = re.compile(
+    r"^(y|e|o|u|and|or|so|then|but|que|de|del|la|el|los|las|to|for|in|on|at|with|por|para|con|en|se)\b",
+    re.IGNORECASE,
+)
+
+
+def _merge_wrapped_lines(lines: List[str]) -> List[str]:
+    """
+    Recompone líneas partidas pertenecientes a la misma frase/opción.
+    Regla principal: Si una línea no termina en puntuación de final y la siguiente
+    empieza en minúscula, o con una conjunción/preposición, o con coma/; -> unir.
+    No une cuando ambas ya parecen oraciones completas.
+    """
+    if not lines:
+        return []
+
+    # Activar solo si hay señales de "wrap": final sin .!? y next comienza en minúscula o coma/;.
+    def is_wrap_pair(a: str, b: str) -> bool:
+        a = a.strip()
+        b = b.strip()
+        if not a or not b:
+            return False
+        end_punct = bool(re.search(r"[.!?]$", a))
+        starts_lower = b[:1].islower()
+        starts_cont = bool(_CONT_START.match(b)) or b.startswith((",", ";"))
+        return (not end_punct) and (starts_lower or starts_cont)
+
+    out: List[str] = []
+    buf = lines[0].strip()
+    i = 1
+    while i < len(lines):
+        cur = lines[i].strip()
+        if is_wrap_pair(buf, cur):
+            # Gestionar guion de corte al final de buf
+            if buf.endswith("-"):
+                buf = buf[:-1] + cur
+            else:
+                # insertar espacio/coma si hace falta (si buf termina en coma, no dupliques)
+                sep = "" if buf.endswith((" ", "—", "–", "—", "…", ",")) else " "
+                buf = f"{buf}{sep}{cur}"
+        else:
+            out.append(buf.strip())
+            buf = cur
+        i += 1
+    if buf:
+        out.append(buf.strip())
+
+    return out
+
+
+# -------------------- Re-agrupado SOLO para tokens cortos -------------------- #
 def _regroup_options_smart(raw_text: str, answers: List[str]) -> List[str]:
     """
     Reagrupa 'palabra-por-línea' (ventana 2..6) solo cuando las líneas parecen tokens cortos.
@@ -133,7 +192,7 @@ def _regroup_options_smart(raw_text: str, answers: List[str]) -> List[str]:
     return raw
 
 
-# ------------------ Correcciones semánticas (Respuesta ↔ Opción) ------------------ #
+# -------------------- Correcciones semánticas (Respuesta ↔ Opción) -------------------- #
 def _semantic_fix_row(options: List[str], answers: List[str]) -> Tuple[List[str], List[str], bool, int]:
     """
     Ajusta 'Respuesta Correcta' a la opción real si hay pequeñas variaciones.
@@ -160,10 +219,11 @@ def _semantic_fix_row(options: List[str], answers: List[str]) -> Tuple[List[str]
                 options.append(a)
                 on.add(an)
                 added_options += 1
+
     return options, new_answers, changed_answer, added_options
 
 
-# ------------------ Proceso principal de saneado ------------------ #
+# -------------------- Proceso principal de saneado -------------------- #
 def _process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Asegurar columnas métricas
     for col in ("Veces Realizada", "Errores"):
@@ -171,19 +231,28 @@ def _process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = 0
 
     for i, row in df.iterrows():
-        numero = row.get("Nº", "")
+        numero = row.get("Nº", row.get("N\u00ba", ""))  # soporte a ambas grafías
         opts_txt = str(row.get("Opciones", ""))
         answers = _split_answers(row.get("Respuesta Correcta", ""))
 
         # 1) Auto-split genérico cuando detecta oraciones pegadas
         opts_lines = _split_sentences_if_needed(opts_txt)
 
+        # 1b) Re-componer envolturas/continuaciones (si procede)
+        # Se aplica si hay indicios de wrap y no mayoría de oraciones separadas
+        maybe_wrapped = any(
+            (not re.search(r"[.!?]$", l)) and (idx + 1 < len(opts_lines)) and
+            (opts_lines[idx + 1][:1].islower() or _CONT_START.match(opts_lines[idx + 1]) or opts_lines[idx + 1].startswith((",", ";")))
+            for idx, l in enumerate(opts_lines)
+        )
+        if maybe_wrapped and not _mostly_sentences(opts_lines):
+            opts_lines = _merge_wrapped_lines(opts_lines)
+
         # 2) En Nº 316..335, fuerza el auto-split cuando siga habiendo 'señales' de texto corrido
         try:
             n_int = int(numero)
         except Exception:
             n_int = None
-
         if n_int is not None and 316 <= n_int <= 335:
             if len(opts_lines) == 1 or any(len(l) > 160 for l in opts_lines):
                 opts_lines = _split_sentences_if_needed("\n".join(opts_lines))
@@ -204,7 +273,7 @@ def _process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def ensure_clean(in_path: str, out_path: str | None = None, backup: bool = True) -> str:
     """
-    Genera (o reutiliza si está actualizado) una versión *_CLEAN.xlsx* con opciones
+    Genera (o reutiliza si está actualizado) una versión *_CLEAN.xlsx con opciones
     bien formateadas (una por línea) y respuestas consistentes. Devuelve su ruta.
     """
     if out_path is None:
@@ -216,6 +285,7 @@ def ensure_clean(in_path: str, out_path: str | None = None, backup: bool = True)
         base, ext = os.path.splitext(in_path)
         backup_path = f"{base}_backup{ext}"
 
+    # Reutiliza si está más reciente que el original
     try:
         if os.path.exists(out_path) and os.path.getmtime(out_path) >= os.path.getmtime(in_path):
             return out_path
@@ -238,6 +308,6 @@ def ensure_clean(in_path: str, out_path: str | None = None, backup: bool = True)
 
 
 if __name__ == "__main__":
-    # Ejecución autónoma: no imprime (silencioso)
+    # Ejecución autónoma: silencioso
     DEFAULT_FILE = "Agil - Copia de Preguntas_Examen.xlsx"
     ensure_clean(DEFAULT_FILE)
