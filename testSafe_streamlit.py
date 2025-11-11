@@ -34,15 +34,9 @@ def cargar_datos():
     # 1. Separadores en la respuesta (;,)
     # 2. Texto en la pregunta que indica selección múltiple
     def es_pregunta_multiple(row):
-        # Detectar preguntas múltiples si contienen la frase "choose two"
-        # (caso insensible) o si la columna 'Respuesta Correcta' contiene
-        # un separador ';' (el usuario añadió ';' para estas preguntas).
+        # Detectar preguntas múltiples SÓLO si contienen la palabra "two" (case-insensitive)
         pregunta = str(row.get('Pregunta', '')).lower()
-        es_multiple_por_texto = 'choose two' in pregunta
-        es_multiple_por_separador = ';' in str(row.get('Respuesta Correcta', ''))
-        return es_multiple_por_texto or es_multiple_por_separador
-        
-        return es_multiple_por_texto or es_multiple_por_separador
+        return 'two' in pregunta
     
     # Marcar preguntas múltiples
     df['Es Multiple'] = df.apply(es_pregunta_multiple, axis=1)
@@ -51,10 +45,9 @@ def cargar_datos():
     def obtener_respuestas(row):
         resp = str(row['Respuesta Correcta'])
         if row['Es Multiple']:
+            # Si es múltiple, buscar separador ';' (si existe, dividir; si no, asumir respuesta única)
             if ';' in resp:
                 return [r.strip() for r in resp.split(';')]
-            elif ',' in resp:
-                return [r.strip() for r in resp.split(',')]
         return [resp.strip()]
     
     df['Respuestas Correctas'] = df.apply(obtener_respuestas, axis=1)
@@ -276,55 +269,14 @@ else:
                 st.write(row.get('Pregunta', ''))
                 opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
 
-                # Obtener y limpiar respuesta correcta
+                # Obtener respuesta correcta normalizada
                 respuesta_correcta = str(row.get('Respuesta Correcta', '')).strip()
+                resp_norm = normaliza(respuesta_correcta)
 
-                def prepara_para_comparar(s: str) -> str:
-                    """Usar la normalización robusta y limpieza adicional para comparaciones.
-                    Devuelve una cadena en minúsculas, sin punctuation, sin slashes y con espacios colapsados.
-                    """
-                    s = normaliza(s)
-                    # normaliza() ya hace casefold y colapsa espacios
-                    # Sustituir slashes y paréntesis por espacios
-                    s = s.replace('/', ' ').replace('(', ' ').replace(')', ' ')
-                    # Quitar comillas y ciertos caracteres residuales
-                    s = s.replace('"', '').replace("'", '')
-                    # Quitar puntuación que quede
-                    s = re.sub(r'[,:;.!·…\-]+', ' ', s)
-                    s = re.sub(r'\s+', ' ', s).strip()
-                    return s
-
-                resp_norm = prepara_para_comparar(respuesta_correcta)
-
-                # Función de comparación flexible: igualdad, substring, token overlap o ratio
-                def es_coincidente(a: str, b: str, token_thresh: float = 0.6, ratio_thresh: float = 0.65) -> bool:
-                    if not a or not b:
-                        return False
-                    if a == b:
-                        return True
-                    if a in b or b in a:
-                        return True
-                    # Token overlap (fracción sobre el conjunto más pequeño)
-                    ta = set(a.split())
-                    tb = set(b.split())
-                    if ta and tb:
-                        inter = ta.intersection(tb)
-                        smaller = min(len(ta), len(tb))
-                        if smaller > 0 and (len(inter) / smaller) >= token_thresh:
-                            return True
-                    # Similaridad de secuencia como último recurso
-                    try:
-                        ratio = SequenceMatcher(None, a, b).ratio()
-                        if ratio >= ratio_thresh:
-                            return True
-                    except Exception:
-                        pass
-                    return False
-
-                # Mostrar opciones con la comprobación flexible
+                # Mostrar opciones con coincidencia exacta (normalizada)
                 for opt in opciones:
-                    opt_norm = prepara_para_comparar(opt)
-                    if es_coincidente(resp_norm, opt_norm):
+                    opt_norm = normaliza(opt)
+                    if opt_norm == resp_norm:
                         st.markdown(f"**✅ {opt}**")
                     else:
                         st.write(opt)
