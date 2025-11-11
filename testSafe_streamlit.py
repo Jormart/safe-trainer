@@ -235,12 +235,11 @@ else:
         if not query or str(query).strip() == "":
             return pd.DataFrame(columns=df_base.columns)
 
-        # Limpiar comillas y espacios
-        query = str(query).strip().replace('"', '').replace("'", "")
-        qn = query.lower()  # Usamos lower para coincidencia simple
+        # Convertir la query a minúsculas para coincidencia flexible
+        qn = str(query).strip().lower()
 
         def fila_coincide(row):
-            # Convertir cada campo a minúsculas para comparación
+            # Convertir cada campo a minúsculas
             texto_pregunta = str(row.get('Pregunta', '')).lower()
             texto_opciones = str(row.get('Opciones', '')).lower()
             texto_respuesta = str(row.get('Respuesta Correcta', '')).lower()
