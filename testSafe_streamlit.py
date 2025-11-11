@@ -18,14 +18,16 @@ tiempo_total = timedelta(minutes=90)  # 1h 30min
 TOP_K_ADAPTATIVO = 50  # pool prioritario para variedad en adaptativo
 
 # =========================
-# Saneado de Excel al arrancar (usa *_CLEAN.xlsx)
+# Saneado de Excel al arrancar (usa *_CLEAN.xlsx) - silencioso
 # =========================
+file_path = ORIGINAL_FILE
 try:
-    from fix_excel import ensure_clean
-    file_path = ensure_clean(ORIGINAL_FILE)  # p.ej. "Agil - Copia de Preguntas_Examen_CLEAN.xlsx"
-except Exception as e:
-    st.warning(f"No se pudo ejecutar el saneado de Excel: {e}")
-    file_path = ORIGINAL_FILE  # fallback
+    from fix_excel import ensure_clean  # saneado interno
+    file_path = ensure_clean(ORIGINAL_FILE) or ORIGINAL_FILE
+except Exception:
+    # Fallback silencioso al original; la app seguirá funcionando con
+    # el reagrupado en tiempo de ejecución en caso de formato irregular.
+    file_path = ORIGINAL_FILE
 
 # =========================
 # Normalización y utilidades
@@ -160,7 +162,7 @@ def cb_responder():
     pregunta = ss.preguntas.iloc[idx]
     enunciado = pregunta['Pregunta']
     respuestas_correctas = pregunta['Respuestas Correctas']
-    correcta = '; '.join(respuestas_correctas)  # <-- corregido
+    correcta = '; '.join(respuestas_correctas)
 
     seleccion_key = f"seleccion_{idx}"
     if seleccion_key not in ss:
@@ -190,8 +192,8 @@ def cb_responder():
             historial_df.to_csv(historial_path, mode='a', header=False, index=False)
         else:
             historial_df.to_csv(historial_path, index=False)
-    except Exception as e:
-        st.warning(f"No se pudo guardar el historial: {e}")
+    except Exception:
+        pass  # silencioso
 
     # Actualizar métricas y persistir
     try:
@@ -205,8 +207,8 @@ def cb_responder():
             df.at[df_idx, 'Errores'] += 1
             ss.ultima_correcta = False
         df.to_excel(file_path, index=False)
-    except Exception as e:
-        st.warning(f"No se pudo actualizar/persistir métricas: {e}")
+    except Exception:
+        pass  # silencioso
 
     ss.respondida = True
 
@@ -228,7 +230,7 @@ else:
     st.markdown(f"⌛ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
 
 # =========================
-# Sidebar - Buscador
+# Sidebar - Buscador (se mantiene)
 # =========================
 def buscar_preguntas(query: str, df_base: pd.DataFrame) -> pd.DataFrame:
     if not query or str(query).strip() == "":
@@ -269,45 +271,6 @@ if 'search_results' in ss and ss.search_results is not None:
                     st.write(opt)
             if row.get('Es Multiple', False):
                 st.info("💡 Esta pregunta requiere seleccionar todas las respuestas correctas")
-
-# ==============================
-# Sidebar - VALIDACIÓN DEL ARCHIVO
-# ==============================
-st.sidebar.subheader("✅ Validar archivo")
-if st.sidebar.button("Validar formato"):
-    inconsistencias = []
-    for idx, row in df.iterrows():
-        numero = row.get("Nº", "")
-        respuestas = obtener_respuestas(row)
-        opciones = reagrupa_opciones_crudas(str(row.get("Opciones", "")), respuestas)
-
-        on = {normaliza(o) for o in opciones}
-        rn = {normaliza(r) for r in respuestas}
-        if respuestas and not rn.issubset(on):
-            faltan = [r for r in respuestas if normaliza(r) not in on]
-            inconsistencias.append(
-                f"Fila {idx+2} (Nº {numero}): Respuesta(s) fuera de opciones -> {faltan}"
-            )
-        df.at[idx, "Opciones"] = "\n".join(opciones)
-
-    # Asegurar métricas
-    for col in ("Veces Realizada", "Errores"):
-        if col not in df.columns:
-            df[col] = 0
-
-    output_file = "Preguntas_Examen_Completas_Validado.xlsx"
-    try:
-        df.to_excel(output_file, index=False)
-        st.sidebar.success(f"Archivo validado y guardado como {output_file}")
-    except Exception as e:
-        st.sidebar.error(f"No se pudo guardar el archivo validado: {e}")
-
-    if inconsistencias:
-        st.sidebar.write("Inconsistencias encontradas:")
-        for inc in inconsistencias:
-            st.sidebar.write(f"- {inc}")
-    else:
-        st.sidebar.write("✅ Todas las filas cumplen el formato correcto.")
 
 # =========================
 # Flujo principal
@@ -386,6 +349,6 @@ else:
         st.info("No hay registros en esta sesión.")
     try:
         df.to_excel(file_path, index=False)
-    except Exception as e:
-        st.warning(f"No se pudo guardar en Excel: {e}")
+    except Exception:
+        pass  # silencioso
     st.button("🔄 Reiniciar sesión", key="btn_reiniciar_final", on_click=cb_reiniciar)
