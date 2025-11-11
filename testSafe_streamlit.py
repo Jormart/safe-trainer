@@ -231,21 +231,28 @@ else:
     # Buscador de preguntas (barra lateral)
     # =========================
     def buscar_preguntas(query: str, df_base: pd.DataFrame) -> pd.DataFrame:
-        """Busca la query normalizada en Pregunta, Opciones y Respuesta Correcta.
-        Devuelve dataframe con filas que contienen la query (casefold y limpieza).
-        """
+        """Busca coincidencias parciales en Pregunta, Opciones, Respuesta Correcta y Nº."""
         if not query or str(query).strip() == "":
             return pd.DataFrame(columns=df_base.columns)
-        # Limpiar comillas del término de búsqueda también
-        query = str(query).replace('"', '').replace('"', '').replace('"', '')
-        qn = normaliza(query)
+
+        # Limpiar comillas y espacios
+        query = str(query).strip().replace('"', '').replace("'", "")
+        qn = query.lower()  # Usamos lower para coincidencia simple
 
         def fila_coincide(row):
-            texto_pregunta = str(row.get('Pregunta', ''))
-            # Quitar comillas y normalizar
-            texto_pregunta = texto_pregunta.replace('"', '').replace('"', '').replace('"', '')
-            texto_pregunta = normaliza(texto_pregunta)
-            return qn in texto_pregunta
+            # Convertir cada campo a minúsculas para comparación
+            texto_pregunta = str(row.get('Pregunta', '')).lower()
+            texto_opciones = str(row.get('Opciones', '')).lower()
+            texto_respuesta = str(row.get('Respuesta Correcta', '')).lower()
+            texto_numero = str(row.get('Nº', '')).lower()
+
+            # Coincidencia parcial
+            return (
+                qn in texto_pregunta
+                or qn in texto_opciones
+                or qn in texto_respuesta
+                or qn == texto_numero
+            )
 
         try:
             resultados = df_base[df_base.apply(fila_coincide, axis=1)].copy()
