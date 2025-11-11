@@ -14,11 +14,11 @@ import unicodedata
 ORIGINAL_FILE = 'Agil - Copia de Preguntas_Examen.xlsx'
 historial_path = 'historial_sesiones.csv'
 num_preguntas_por_sesion = 10
-tiempo_total = timedelta(minutes=90)
+tiempo_total = timedelta(minutes=90)  # 1h 30min
 TOP_K_ADAPTATIVO = 50
 
 # =========================
-# Saneado interno (usa *_CLEAN.xlsx)
+# Saneado inicial (silencioso)
 # =========================
 file_path = ORIGINAL_FILE
 try:
@@ -28,7 +28,7 @@ except Exception:
     file_path = ORIGINAL_FILE
 
 # =========================
-# Utilidades
+# Normalización + utilidades
 # =========================
 def normaliza(s: str) -> str:
     if s is None:
@@ -40,11 +40,35 @@ def normaliza(s: str) -> str:
     s = re.sub(r"[.;:]+$", "", s)
     return s
 
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+_CAPS_REGEX = re.compile(r'[A-Z][^A-Z]+(?=(?: [A-Z]|$))')
+
+def explode_compounded_options(options_text: str) -> list[str]:
+    raw = [l.strip() for l in str(options_text or "").split("\n") if l.strip()]
+    if not raw:
+        return []
+    # split por oraciones
+    parts, changed = [], False
+    for l in raw:
+        sents = [p.strip() for p in _SENT_SPLIT.split(l) if p.strip()]
+        if len(sents) >= 2:
+            parts.extend(sents); changed = True
+        else:
+            parts.append(l)
+    if changed:
+        return parts
+    # capital-split
+    joined = " ".join(raw)
+    caps = [c.strip() for c in _CAPS_REGEX.findall(joined) if c.strip()]
+    if len(caps) >= 2:
+        return caps
+    return raw
+
 def split_respuestas(texto: str) -> list[str]:
-    return [x.strip() for x in str(texto or "").split(";") if x.strip()]
+    return [x.strip() for x in str(texto or "").split(";") if str(x).strip()]
 
 def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> list[str]:
-    ops = [o.strip() for o in str(opciones_texto or "").split("\n") if o.strip()]
+    ops = explode_compounded_options(opciones_texto)
     if not ops or not respuestas:
         return []
     on = {normaliza(o): o for o in ops}
@@ -52,8 +76,7 @@ def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> lis
     for r in respuestas:
         rn = normaliza(r)
         if rn in on:
-            can.append(on[rn])
-            continue
+            can.append(on[rn]); continue
         cands = [(o, len(o)) for o in ops if (normaliza(o) in rn) or (rn in normaliza(o))]
         if cands:
             best = sorted(cands, key=lambda t: t[1], reverse=True)[0][0]
@@ -72,8 +95,13 @@ def cargar_datos():
         df['Veces Realizada'] = 0
     if 'Errores' not in df.columns:
         df['Errores'] = 0
+
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
+
     df['Respuestas Correctas'] = df['Respuesta Correcta'].map(split_respuestas)
+    # Opciones “explotadas” para coherencia global
+    df['Opciones'] = df['Opciones'].map(lambda t: "\n".join(explode_compounded_options(t)))
+    # Canónicas y múltiple
     df['Correctas Canonicas'] = df.apply(
         lambda r: map_respuestas_a_opciones(r['Opciones'], r['Respuestas Correctas']),
         axis=1
@@ -87,19 +115,27 @@ df = cargar_datos()
 # Estado de sesión
 # =========================
 ss = st.session_state
-if 'inicio' not in ss: ss.inicio = datetime.now()
-if 'idx' not in ss: ss.idx = 0
-if 'historial' not in ss: ss.historial = []
-if 'preguntas' not in ss: ss.preguntas = None
-if 'modo' not in ss: ss.modo = None
-if 'opciones_mezcladas' not in ss: ss.opciones_mezcladas = {}
-if 'respondida' not in ss: ss.respondida = False
-if 'ultima_correcta' not in ss: ss.ultima_correcta = None
+if 'inicio' not in ss:
+    ss.inicio = datetime.now()
+if 'idx' not in ss:
+    ss.idx = 0
+if 'historial' not in ss:
+    ss.historial = []
+if 'preguntas' not in ss:
+    ss.preguntas = None
+if 'modo' not in ss:
+    ss.modo = None
+if 'opciones_mezcladas' not in ss:
+    ss.opciones_mezcladas = {}
+if 'respondida' not in ss:
+    ss.respondida = False
+if 'ultima_correcta' not in ss:
+    ss.ultima_correcta = None
 
 # =========================
-# Lógica
+# Lógica de preguntas
 # =========================
-def preparar_preguntas(df_base, modo, n):
+def preparar_preguntas(df_base: pd.DataFrame, modo: str, n: int) -> pd.DataFrame:
     if modo == "Adaptativo":
         base = df_base.sort_values(by=['Errores', 'Veces Realizada'], ascending=[False, True])
         k = min(TOP_K_ADAPTATIVO, len(base))
@@ -111,7 +147,8 @@ def preparar_preguntas(df_base, modo, n):
         aleatorias['df_index'] = aleatorias.index
         return aleatorias.reset_index(drop=True)
 
-def cb_reiniciar(): ss.clear()
+def cb_reiniciar():
+    ss.clear()
 
 def cb_iniciar(modo_select):
     ss.modo = modo_select
@@ -125,40 +162,56 @@ def cb_iniciar(modo_select):
 def cb_responder():
     idx = ss.idx
     pregunta = ss.preguntas.iloc[idx]
-    correctas_canonicas = map_respuestas_a_opciones(pregunta['Opciones'], pregunta['Respuestas Correctas'])
+    enunciado = pregunta['Pregunta']
+
+    correctas_canonicas = map_respuestas_a_opciones(
+        pregunta['Opciones'], pregunta['Respuestas Correctas']
+    )
+
     seleccion_key = f"seleccion_{idx}"
-    if seleccion_key not in ss: return
+    if seleccion_key not in ss:
+        return
     seleccion = ss[seleccion_key]
-    if not isinstance(seleccion, list): seleccion = [seleccion]
+    if not isinstance(seleccion, list):
+        seleccion = [seleccion]
+
     seleccion_norm = {normaliza(s) for s in seleccion}
     correctas_norm = {normaliza(c) for c in correctas_canonicas}
     es_correcta = (seleccion_norm == correctas_norm)
+    resultado = '✅' if es_correcta else '❌'
+
     registro = {
         'Fecha': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'Pregunta': pregunta['Pregunta'],
+        'Pregunta': enunciado,
         'Respuesta Dada': seleccion,
         'Respuesta Correcta': "; ".join(correctas_canonicas),
-        'Resultado': '✅' if es_correcta else '❌'
+        'Resultado': resultado
     }
     ss.historial.append(registro)
+
     try:
         historial_df = pd.DataFrame([registro])
         if os.path.exists(historial_path):
             historial_df.to_csv(historial_path, mode='a', header=False, index=False)
         else:
             historial_df.to_csv(historial_path, index=False)
-    except: pass
+    except Exception:
+        pass
+
     try:
         df_idx = ss.preguntas.loc[idx, 'df_index']
         df.at[df_idx, 'Veces Realizada'] += 1
         if es_correcta:
-            if df.at[df_idx, 'Errores'] > 0: df.at[df_idx, 'Errores'] -= 1
+            if df.at[df_idx, 'Errores'] > 0:
+                df.at[df_idx, 'Errores'] -= 1
             ss.ultima_correcta = True
         else:
             df.at[df_idx, 'Errores'] += 1
             ss.ultima_correcta = False
         df.to_excel(file_path, index=False)
-    except: pass
+    except Exception:
+        pass
+
     ss.respondida = True
 
 def cb_siguiente():
@@ -167,74 +220,131 @@ def cb_siguiente():
     ss.ultima_correcta = None
 
 # =========================
-# UI
+# UI - Cabecera
 # =========================
 st.title("🧠 Entrenador SAFe - Sesión de preguntas")
 tiempo_restante = tiempo_total - (datetime.now() - ss.inicio)
 if tiempo_restante.total_seconds() <= 0:
-    st.error("⏰ ¡Tiempo agotado!")
-    st.button("🔄 Reiniciar sesión", on_click=cb_reiniciar)
+    st.error("⏰ ¡Tiempo agotado! La sesión ha finalizado.")
+    st.button("🔄 Reiniciar sesión", key="btn_reiniciar_timeout", on_click=cb_reiniciar)
     st.stop()
 else:
     st.markdown(f"⌛ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
 
-# Sidebar Buscador
+# =========================
+# Sidebar - Buscador (marca ✅ TODAS las correctas; sin redundancias)
+# =========================
+def buscar_preguntas(query: str, df_base: pd.DataFrame) -> pd.DataFrame:
+    if not query or str(query).strip() == "":
+        return pd.DataFrame(columns=df_base.columns)
+    qn = str(query).strip().lower()
+    def fila_coincide(row):
+        texto_pregunta = str(row.get('Pregunta', '')).lower()
+        texto_opciones = str(row.get('Opciones', '')).lower()
+        texto_respuesta = str(row.get('Respuesta Correcta', '')).lower()
+        texto_numero = str(row.get('Nº', '')).lower()
+        return (qn in texto_pregunta or qn in texto_opciones or qn in texto_respuesta or qn == texto_numero)
+    try:
+        return df_base[df_base.apply(fila_coincide, axis=1)].copy()
+    except Exception:
+        return pd.DataFrame(columns=df_base.columns)
+
 st.sidebar.header("🔎 Buscador de preguntas")
 buscar_text = st.sidebar.text_input("Palabras clave")
 if st.sidebar.button("Buscar"):
-    ss.search_results = df[df.apply(lambda r: buscar_text.lower() in str(r['Pregunta']).lower(), axis=1)]
+    ss.search_results = buscar_preguntas(buscar_text, df)
+
 if 'search_results' in ss and ss.search_results is not None:
     resultados = ss.search_results
     st.sidebar.write(f"Resultados: {len(resultados)}")
-    for i, (_, row) in enumerate(resultados.head(30).iterrows()):
-        with st.sidebar.expander(f"{i+1}. {row['Pregunta']}"):
-            correctas_canonicas = map_respuestas_a_opciones(row['Opciones'], row['Respuestas Correctas'])
-            correctas_norm = {normaliza(c) for c in correctas_canonicas}
-            for opt in [o.strip() for o in row['Opciones'].split('\n') if o.strip()]:
+    max_show = 30
+    for i, (_, row) in enumerate(resultados.head(max_show).iterrows()):
+        titulo = row.get('Pregunta', '')
+        with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
+            st.write(row.get('Pregunta', ''))
+
+            # Explota opciones pegadas para mostrar una por línea
+            opciones = explode_compounded_options(row.get('Opciones', ''))
+            correctas = map_respuestas_a_opciones(row.get('Opciones', ''), split_respuestas(row.get('Respuesta Correcta', '')))
+            correctas_norm = {normaliza(c) for c in correctas}
+
+            for opt in opciones:
                 if normaliza(opt) in correctas_norm:
                     st.markdown(f"**✅ {opt}**")
                 else:
                     st.write(opt)
 
+# =========================
 # Flujo principal
+# =========================
 if ss.modo is None:
-    st.subheader("Selecciona el modo:")
-    modo = st.radio("Modo:", ["Adaptativo", "Aleatorio puro"])
-    st.button("Iniciar sesión", on_click=cb_iniciar, args=(modo,))
+    st.subheader("Selecciona el modo de preguntas:")
+    modo = st.radio("Modo:", ["Adaptativo", "Aleatorio puro"], key="modo_selector")
+    st.button("Iniciar sesión", key="btn_iniciar", on_click=cb_iniciar, args=(modo,))
+
 elif ss.idx < len(ss.preguntas):
     fila = ss.preguntas.iloc[ss.idx]
-    opciones = [o.strip() for o in fila['Opciones'].split('\n') if o.strip()]
+    enunciado = fila['Pregunta']
+
+    # Opciones tal cual (ya “explotadas” en df)
+    opciones = [op.strip() for op in str(fila['Opciones']).split('\n') if op.strip()]
     correctas_canonicas = map_respuestas_a_opciones(fila['Opciones'], fila['Respuestas Correctas'])
+
+    # Mezclar opciones una vez
     if ss.idx not in ss.opciones_mezcladas:
-        mezcladas = opciones.copy(); random.shuffle(mezcladas); ss.opciones_mezcladas[ss.idx] = mezcladas
+        mezcladas = opciones.copy()
+        random.shuffle(mezcladas)
+        ss.opciones_mezcladas[ss.idx] = mezcladas
     else:
         mezcladas = ss.opciones_mezcladas[ss.idx]
-    st.subheader(f"Pregunta {ss.idx+1}/{len(ss.preguntas)}")
-    st.write(fila['Pregunta'])
+
+    st.subheader(f"Pregunta {ss.idx + 1} / {len(ss.preguntas)}")
+    st.write(enunciado)
+
     es_multiple = len(set(correctas_canonicas)) > 1
     seleccion_key = f"seleccion_{ss.idx}"
     if seleccion_key not in ss:
-        ss[seleccion_key] = [] if es_multiple else (mezcladas[0] if mezcladas else "")
+        ss[seleccion_key] = [] if es_multiple else (mezcladas[0] if len(mezcladas) > 0 else "")
+
     if es_multiple:
         seleccion = []
         for opcion in mezcladas:
-            if st.checkbox(opcion, key=f"check_{ss.idx}_{opcion}"): seleccion.append(opcion)
+            if st.checkbox(opcion, key=f"check_{ss.idx}_{opcion}"):
+                seleccion.append(opcion)
         ss[seleccion_key] = seleccion
     else:
-        ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas)
-    col1, col2 = st.columns(2)
+        ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{ss.idx}")
+
+    col1, col2 = st.columns([1, 1])
     with col1:
-        st.button("Responder", on_click=cb_responder, disabled=ss.respondida)
+        st.button(
+            "Responder",
+            key=f"btn_responder_{ss.idx}",
+            on_click=cb_responder,
+            disabled=ss.respondida
+        )
         if ss.respondida:
-            if ss.ultima_correcta: st.success("✅ ¡Correcto!")
-            else: st.error(f"❌ Incorrecto. Correctas: {'; '.join(correctas_canonicas)}")
+            if ss.ultima_correcta:
+                st.success("✅ ¡Correcto!")
+            else:
+                st.error(f"❌ Incorrecto. La(s) respuesta(s) correcta(s): {'; '.join(correctas_canonicas)}")
     with col2:
-        st.button("Siguiente ➜", on_click=cb_siguiente)
+        st.button("Siguiente ➜", key=f"btn_siguiente_{ss.idx}", on_click=cb_siguiente)
+
 else:
-    st.subheader("📋 Resumen")
+    st.subheader("📋 Resumen de la sesión")
     total = len(ss.historial)
     aciertos = sum(1 for h in ss.historial if h['Resultado'] == '✅')
     errores = total - aciertos
-    st.write(f"Total: {total} | ✅ {aciertos} | ❌ {errores} | % {round((aciertos/total)*100,2) if total else 0}")
-    st.dataframe(pd.DataFrame(ss.historial))
-    st.button("🔄 Reiniciar sesión", on_click=cb_reiniciar)
+    porcentaje = round((aciertos / total) * 100, 2) if total else 0.0
+    st.write(f"- Total: {total}\n✅ Aciertos: {aciertos}\n❌ Errores: {errores}\n%: {porcentaje}%")
+    st.write("Historial:")
+    if total:
+        st.dataframe(pd.DataFrame(ss.historial))
+    else:
+        st.info("No hay registros en esta sesión.")
+    try:
+        df.to_excel(file_path, index=False)
+    except Exception:
+        pass
+    st.button("🔄 Reiniciar sesión", key="btn_reiniciar_final", on_click=cb_reiniciar)
