@@ -15,22 +15,23 @@ ORIGINAL_FILE = 'Agil - Copia de Preguntas_Examen.xlsx'
 historial_path = 'historial_sesiones.csv'
 num_preguntas_por_sesion = 10
 tiempo_total = timedelta(minutes=90)  # 1h 30min
-TOP_K_ADAPTATIVO = 50
+TOP_K_ADAPTATIVO = 50  # pool prioritario para variedad en adaptativo
 
 # =========================
-# Saneado inicial (silencioso)
+# Saneado de Excel al arrancar (usa *_CLEAN.xlsx) - silencioso
 # =========================
 file_path = ORIGINAL_FILE
 try:
     from fix_excel import ensure_clean
     file_path = ensure_clean(ORIGINAL_FILE) or ORIGINAL_FILE
 except Exception:
-    file_path = ORIGINAL_FILE
+    file_path = ORIGINAL_FILE  # silencioso
 
 # =========================
-# Normalización + utilidades
+# Normalización y utilidades
 # =========================
 def normaliza(s: str) -> str:
+    """Normalización robusta para comparar textos (Unicode, NBSP, espacios, puntuación final)."""
     if s is None:
         return ""
     s = unicodedata.normalize("NFKC", str(s))
@@ -40,49 +41,36 @@ def normaliza(s: str) -> str:
     s = re.sub(r"[.;:]+$", "", s)
     return s
 
-_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
-_CAPS_REGEX = re.compile(r'[A-Z][^A-Z]+(?=(?: [A-Z]|$))')
-
-def explode_compounded_options(options_text: str) -> list[str]:
-    raw = [l.strip() for l in str(options_text or "").split("\n") if l.strip()]
-    if not raw:
-        return []
-    # split por oraciones
-    parts, changed = [], False
-    for l in raw:
-        sents = [p.strip() for p in _SENT_SPLIT.split(l) if p.strip()]
-        if len(sents) >= 2:
-            parts.extend(sents); changed = True
-        else:
-            parts.append(l)
-    if changed:
-        return parts
-    # capital-split
-    joined = " ".join(raw)
-    caps = [c.strip() for c in _CAPS_REGEX.findall(joined) if c.strip()]
-    if len(caps) >= 2:
-        return caps
-    return raw
-
 def split_respuestas(texto: str) -> list[str]:
     return [x.strip() for x in str(texto or "").split(";") if str(x).strip()]
 
 def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> list[str]:
-    ops = explode_compounded_options(opciones_texto)
+    """
+    Devuelve la(s) opción(es) canónica(s) (tal como aparecen en 'Opciones') que
+    corresponden a las 'Respuestas Correctas' dadas (tras normalizar).
+    Regla:
+      1) match por igualdad normalizada
+      2) si no, por contención (elige la opción más larga)
+      3) si no, devuelve la respuesta tal cual (último recurso)
+    """
+    ops = [o.strip() for o in str(opciones_texto or "").split("\n") if o.strip()]
     if not ops or not respuestas:
         return []
-    on = {normaliza(o): o for o in ops}
+    on = {normaliza(o): o for o in ops}  # norm -> original opción
     can = []
     for r in respuestas:
         rn = normaliza(r)
         if rn in on:
-            can.append(on[rn]); continue
-        cands = [(o, len(o)) for o in ops if (normaliza(o) in rn) or (rn in normaliza(o))]
+            can.append(on[rn])
+            continue
+        # contención
+        cands = [(o, len(o)) for o in ops
+                 if (normaliza(o) in rn) or (rn in normaliza(o))]
         if cands:
             best = sorted(cands, key=lambda t: t[1], reverse=True)[0][0]
             can.append(best)
         else:
-            can.append(r)
+            can.append(r)  # fallback
     return can
 
 # =========================
@@ -91,22 +79,26 @@ def map_respuestas_a_opciones(opciones_texto: str, respuestas: list[str]) -> lis
 @st.cache_data
 def cargar_datos():
     df = pd.read_excel(file_path, engine='openpyxl')
+
+    # Asegurar métricas
     if 'Veces Realizada' not in df.columns:
         df['Veces Realizada'] = 0
     if 'Errores' not in df.columns:
         df['Errores'] = 0
 
+    # Limpiar nulos básicos
     df = df.dropna(subset=['Pregunta', 'Opciones', 'Respuesta Correcta']).reset_index(drop=True)
 
+    # Respuestas (lista) y Correctas Canónicas (opciones exactas)
     df['Respuestas Correctas'] = df['Respuesta Correcta'].map(split_respuestas)
-    # Opciones “explotadas” para coherencia global
-    df['Opciones'] = df['Opciones'].map(lambda t: "\n".join(explode_compounded_options(t)))
-    # Canónicas y múltiple
     df['Correctas Canonicas'] = df.apply(
         lambda r: map_respuestas_a_opciones(r['Opciones'], r['Respuestas Correctas']),
         axis=1
     )
+
+    # Detección MULTIPLE basada SOLO en datos coherentes (opciones ↔ respuestas)
     df['Es Multiple'] = df['Correctas Canonicas'].map(lambda xs: len(set(xs)) > 1)
+
     return df
 
 df = cargar_datos()
@@ -164,6 +156,7 @@ def cb_responder():
     pregunta = ss.preguntas.iloc[idx]
     enunciado = pregunta['Pregunta']
 
+    # Recalcular canónicas con las opciones que se muestran (por máxima coherencia)
     correctas_canonicas = map_respuestas_a_opciones(
         pregunta['Opciones'], pregunta['Respuestas Correctas']
     )
@@ -175,6 +168,7 @@ def cb_responder():
     if not isinstance(seleccion, list):
         seleccion = [seleccion]
 
+    # Comparar contra Correctas Canónicas (normalizadas)
     seleccion_norm = {normaliza(s) for s in seleccion}
     correctas_norm = {normaliza(c) for c in correctas_canonicas}
     es_correcta = (seleccion_norm == correctas_norm)
@@ -189,6 +183,7 @@ def cb_responder():
     }
     ss.historial.append(registro)
 
+    # Guardar historial y métricas (silencioso)
     try:
         historial_df = pd.DataFrame([registro])
         if os.path.exists(historial_path):
@@ -232,7 +227,7 @@ else:
     st.markdown(f"⌛ Tiempo restante: **{tiempo_restante.seconds // 60} min**")
 
 # =========================
-# Sidebar - Buscador (marca ✅ TODAS las correctas; sin redundancias)
+# Sidebar - Buscador (marca ✅ TODAS las correctas; sin textos redundantes)
 # =========================
 def buscar_preguntas(query: str, df_base: pd.DataFrame) -> pd.DataFrame:
     if not query or str(query).strip() == "":
@@ -262,17 +257,19 @@ if 'search_results' in ss and ss.search_results is not None:
         titulo = row.get('Pregunta', '')
         with st.sidebar.expander(f"{i+1}. {str(titulo)}"):
             st.write(row.get('Pregunta', ''))
+            # Mapear canónicas para marcar TODAS las correctas con ✅
+            correctas_canonicas = map_respuestas_a_opciones(
+                row.get('Opciones', ''), split_respuestas(row.get('Respuesta Correcta', ''))
+            )
+            correctas_norm = {normaliza(c) for c in correctas_canonicas}
 
-            # Explota opciones pegadas para mostrar una por línea
-            opciones = explode_compounded_options(row.get('Opciones', ''))
-            correctas = map_respuestas_a_opciones(row.get('Opciones', ''), split_respuestas(row.get('Respuesta Correcta', '')))
-            correctas_norm = {normaliza(c) for c in correctas}
-
+            opciones = [op.strip() for op in str(row.get('Opciones', '')).split('\n') if op.strip()]
             for opt in opciones:
                 if normaliza(opt) in correctas_norm:
                     st.markdown(f"**✅ {opt}**")
                 else:
                     st.write(opt)
+            # (Eliminado) texto de aviso “esta pregunta requiere…” para evitar redundancias
 
 # =========================
 # Flujo principal
@@ -286,11 +283,11 @@ elif ss.idx < len(ss.preguntas):
     fila = ss.preguntas.iloc[ss.idx]
     enunciado = fila['Pregunta']
 
-    # Opciones tal cual (ya “explotadas” en df)
+    # Opciones tal cual (CLEAN) y canónicas (por coherencia total)
     opciones = [op.strip() for op in str(fila['Opciones']).split('\n') if op.strip()]
     correctas_canonicas = map_respuestas_a_opciones(fila['Opciones'], fila['Respuestas Correctas'])
 
-    # Mezclar opciones una vez
+    # Mezclar opciones solo una vez
     if ss.idx not in ss.opciones_mezcladas:
         mezcladas = opciones.copy()
         random.shuffle(mezcladas)
@@ -307,12 +304,14 @@ elif ss.idx < len(ss.preguntas):
         ss[seleccion_key] = [] if es_multiple else (mezcladas[0] if len(mezcladas) > 0 else "")
 
     if es_multiple:
+        # Pregunta múltiple -> checkboxes (sin mensajes redundantes)
         seleccion = []
         for opcion in mezcladas:
             if st.checkbox(opcion, key=f"check_{ss.idx}_{opcion}"):
                 seleccion.append(opcion)
         ss[seleccion_key] = seleccion
     else:
+        # Respuesta única -> radio
         ss[seleccion_key] = st.radio("Selecciona una opción:", mezcladas, key=f"radio_{ss.idx}")
 
     col1, col2 = st.columns([1, 1])
@@ -329,7 +328,11 @@ elif ss.idx < len(ss.preguntas):
             else:
                 st.error(f"❌ Incorrecto. La(s) respuesta(s) correcta(s): {'; '.join(correctas_canonicas)}")
     with col2:
-        st.button("Siguiente ➜", key=f"btn_siguiente_{ss.idx}", on_click=cb_siguiente)
+        st.button(
+            "Siguiente ➜",
+            key=f"btn_siguiente_{ss.idx}",
+            on_click=cb_siguiente
+        )
 
 else:
     st.subheader("📋 Resumen de la sesión")
